@@ -1,0 +1,42 @@
+[project]
+name = "archie"
+version = "0.1.0"
+description = "Personal AI agent harness"
+readme = "README.md"
+authors = [
+    { name = "Simon Downes", email = "simon@simondownes.co.uk" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "boto3>=1,<2",
+    "click>=8,<9",
+    "pyyaml>=6,<7",
+    "textual>=8,<9",
+]
+
+[project.scripts]
+archie = "archie.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.18,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.15.15",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "N", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["N818"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
