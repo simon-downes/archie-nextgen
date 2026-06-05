@@ -41,8 +41,12 @@ def make_read_file_spec(cwd: Path, allowed_directories: list[Path]) -> ToolSpec:
 
     Uses a closure pattern: the handler captures `cwd` and `allowed_directories`
     at registration time. This avoids needing to pass config through the tool
-    dispatch system.
+    dispatch system. The mtime cache also lives here as a closure variable —
+    it's tool-specific state that doesn't belong in the Engine.
     """
+    # Mtime dedup cache: (resolved_path, offset, limit) → mtime
+    # If the file hasn't changed since last read with same params, return a stub.
+    _mtime_cache: dict[tuple[str, int, int], float] = {}
 
     def handler(params: dict) -> str:
         """Read a file and return line-numbered content.
@@ -63,6 +67,20 @@ def make_read_file_spec(cwd: Path, allowed_directories: list[Path]) -> ToolSpec:
 
         if not resolved.is_file():
             return tool_error(f"Not a file: {path_str}")
+
+        # --- Mtime dedup ---
+        # If the same file region was read before and hasn't changed, return
+        # a stub to avoid re-sending content the model already has in context.
+        resolved_str = str(resolved)
+        cache_key = (resolved_str, offset, limit)
+        try:
+            current_mtime = resolved.stat().st_mtime
+            if cache_key in _mtime_cache and _mtime_cache[cache_key] == current_mtime:
+                return tool_result(
+                    f"File unchanged since last read: {path_str} (offset={offset}, limit={limit})"
+                )
+        except OSError:
+            pass  # Can't stat — proceed with the read, let it fail naturally
 
         # --- Binary detection ---
         # Check the first 8KB for null bytes. Binary files (images, compiled
@@ -111,6 +129,13 @@ def make_read_file_spec(cwd: Path, allowed_directories: list[Path]) -> ToolSpec:
             header += f"\n{showing}\n{hint}"
 
         content = header + "\n\n" + "\n".join(numbered)
+
+        # --- Update mtime cache on successful read ---
+        try:
+            _mtime_cache[cache_key] = resolved.stat().st_mtime
+        except OSError:
+            pass
+
         return tool_result(content)
 
     return ToolSpec(

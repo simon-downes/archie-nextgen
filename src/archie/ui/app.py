@@ -25,6 +25,7 @@ from archie.config import load_config
 from archie.engine import Engine
 from archie.llm import BedrockClient
 from archie.models import get_model_info
+from archie.prompt import SYSTEM_PROMPT
 from archie.session import Session
 from archie.tools import create_default_registry
 from archie.types import TextDelta, ToolCallResult, ToolCallStart, TurnComplete
@@ -137,7 +138,7 @@ class ArchieApp(App):
             llm_client=self.llm,
             session=self.session,
             tool_registry=self.tool_registry,
-            system_prompt=self.config.system_prompt,
+            system_prompt=SYSTEM_PROMPT,
         )
 
         # Streaming state
@@ -290,7 +291,7 @@ class ArchieApp(App):
             llm_client=self.llm,
             session=self.session,
             tool_registry=self.tool_registry,
-            system_prompt=self.config.system_prompt,
+            system_prompt=SYSTEM_PROMPT,
         )
         conv = self.query_one("#conversation", Conversation)
         conv.remove_children()

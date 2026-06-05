@@ -14,7 +14,6 @@ def test_load_config_creates_default(tmp_path, monkeypatch):
     config = load_config()
     assert config.model == "eu.anthropic.claude-sonnet-4-6"
     assert config.region == "eu-west-1"
-    assert "helpful" in config.system_prompt
     assert (tmp_path / "nextgen.yaml").exists()
 
 
@@ -28,7 +27,6 @@ def test_load_config_reads_existing(tmp_path, monkeypatch):
             {
                 "model": "eu.anthropic.claude-haiku-3-20250305-v1:0",
                 "region": "eu-west-1",
-                "system_prompt": "Be terse.",
             }
         )
     )
@@ -36,7 +34,6 @@ def test_load_config_reads_existing(tmp_path, monkeypatch):
     config = load_config()
     assert config.model == "eu.anthropic.claude-haiku-3-20250305-v1:0"
     assert config.region == "eu-west-1"
-    assert config.system_prompt == "Be terse."
 
 
 def test_load_config_unknown_model(tmp_path, monkeypatch):

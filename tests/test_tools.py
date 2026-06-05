@@ -235,3 +235,65 @@ class TestSearchFiles:
             result = tool.handler({"pattern": "test", "path": "."})
         assert "Error:" in result
         assert "not installed" in result
+
+
+class TestReadFileMtimeDedup:
+    """Tests for read_file mtime-based deduplication."""
+
+    def test_returns_stub_on_unchanged_file(self, tmp_path):
+        """Second read of same file with same params returns stub."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello\nworld\n")
+
+        from archie.tools.read_file import make_read_file_spec
+
+        spec = make_read_file_spec(cwd=tmp_path, allowed_directories=[])
+
+        # First read — returns content
+        result1 = spec.handler({"path": str(test_file), "offset": 0, "limit": 500})
+        assert "hello" in result1
+
+        # Second read — same file, same params → stub
+        result2 = spec.handler({"path": str(test_file), "offset": 0, "limit": 500})
+        assert "unchanged" in result2.lower()
+
+    def test_rereads_when_mtime_changes(self, tmp_path):
+        """File is re-read when content changes between calls."""
+        import time
+
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("version1\n")
+
+        from archie.tools.read_file import make_read_file_spec
+
+        spec = make_read_file_spec(cwd=tmp_path, allowed_directories=[])
+
+        # First read
+        result1 = spec.handler({"path": str(test_file)})
+        assert "version1" in result1
+
+        # Modify file (force mtime change)
+        time.sleep(0.01)
+        test_file.write_text("version2\n")
+
+        # Second read — file changed, should return new content
+        result2 = spec.handler({"path": str(test_file)})
+        assert "version2" in result2
+        assert "unchanged" not in result2.lower()
+
+    def test_different_offset_not_cached(self, tmp_path):
+        """Different offset is a different cache key."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("line1\nline2\nline3\n")
+
+        from archie.tools.read_file import make_read_file_spec
+
+        spec = make_read_file_spec(cwd=tmp_path, allowed_directories=[])
+
+        # Read with offset=0
+        spec.handler({"path": str(test_file), "offset": 0, "limit": 500})
+
+        # Read with offset=1 — different params, should return content
+        result = spec.handler({"path": str(test_file), "offset": 1, "limit": 500})
+        assert "unchanged" not in result.lower()
+        assert "line2" in result

@@ -28,9 +28,6 @@ SESSIONS_DIR = ARCHIE_DIR / "sessions"
 DEFAULT_CONFIG = """\
 model: "eu.anthropic.claude-sonnet-4-6"
 region: "eu-west-1"
-
-system_prompt: |
-  You are a helpful assistant. Be direct and concise.
 """
 
 
@@ -55,7 +52,6 @@ class Config:
 
     model: str
     region: str
-    system_prompt: str
     tools: ToolsConfig = ToolsConfig()
 
 
@@ -87,11 +83,10 @@ def load_config() -> Config:
     get_model_info(model)
 
     region = raw.get("region", "eu-west-1")
-    system_prompt = raw.get("system_prompt", "You are a helpful assistant.")
 
     # Parse tools config
     tools_raw = raw.get("tools", {}) or {}
     allowed_dirs = tuple(Path(p) for p in tools_raw.get("allowed_directories", []))
     tools_config = ToolsConfig(allowed_directories=allowed_dirs)
 
-    return Config(model=model, region=region, system_prompt=system_prompt, tools=tools_config)
+    return Config(model=model, region=region, tools=tools_config)

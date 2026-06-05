@@ -21,9 +21,7 @@ Flow:
 import hashlib
 import json
 import logging
-import os
 from collections.abc import Generator
-from pathlib import Path
 
 from archie.llm import BedrockClient, Done, ToolUseEvent, Usage
 from archie.llm import TextDelta as LlmTextDelta
@@ -78,11 +76,6 @@ class Engine:
         # Resets when a different tool+args combination is called.
         self._last_call_key: tuple[str, str] | None = None
         self._consecutive_count: int = 0
-
-        # --- Mtime dedup cache for read_file ---
-        # Maps (path, offset, limit) → mtime. If file hasn't changed,
-        # return a stub instead of re-reading the full content.
-        self._read_file_cache: dict[tuple[str, int, int], float] = {}
 
     def run(self, user_message: str) -> Generator[EngineEvent]:
         """Process a user message through the full LLM + tool loop.
@@ -211,7 +204,6 @@ class Engine:
         Handles:
         - Tool lookup (unknown tool → error)
         - Consecutive-call detection (warn at 3, block at 4)
-        - Mtime dedup for read_file
         - Exception handling (tool crashes → error result)
         """
         # --- Consecutive-call detection ---
@@ -234,12 +226,6 @@ class Engine:
         if spec is None:
             return f"Error: Unknown tool '{name}'", True
 
-        # --- Mtime dedup for read_file ---
-        if name == "read_file":
-            dedup_result = self._check_read_file_cache(args)
-            if dedup_result is not None:
-                return dedup_result, False
-
         # --- Execute handler ---
         try:
             result = spec.handler(args)
@@ -254,57 +240,4 @@ class Engine:
                 "Consider a different approach to avoid being blocked."
             )
 
-        # --- Update mtime cache for read_file ---
-        if name == "read_file":
-            self._update_read_file_cache(args)
-
         return result, False
-
-    def _check_read_file_cache(self, args: dict) -> str | None:
-        """Check if a read_file call can be served from cache.
-
-        Returns a stub string if the file hasn't changed, or None to proceed
-        with the actual read. Uses resolved (absolute) paths as cache keys
-        so that "./foo.py" and "foo.py" are treated as the same file.
-        """
-        path_str = args.get("path", "")
-        offset = args.get("offset", 0)
-        limit = args.get("limit", 500)
-
-        # Resolve to absolute path for consistent cache keys
-        try:
-            resolved = str(Path(path_str).resolve())
-        except (OSError, ValueError):
-            return None
-
-        cache_key = (resolved, offset, limit)
-
-        if cache_key not in self._read_file_cache:
-            return None
-
-        # Check current mtime
-        try:
-            current_mtime = os.path.getmtime(resolved)
-        except OSError:
-            # File gone or unreadable — let the handler deal with it
-            self._read_file_cache.pop(cache_key, None)
-            return None
-
-        if current_mtime == self._read_file_cache[cache_key]:
-            return f"File unchanged since last read: {path_str} (offset={offset}, limit={limit})"
-
-        # Mtime changed — invalidate and let handler re-read
-        self._read_file_cache.pop(cache_key, None)
-        return None
-
-    def _update_read_file_cache(self, args: dict) -> None:
-        """Cache the mtime after a successful read_file call."""
-        path_str = args.get("path", "")
-        offset = args.get("offset", 0)
-        limit = args.get("limit", 500)
-
-        try:
-            resolved = str(Path(path_str).resolve())
-            self._read_file_cache[(resolved, offset, limit)] = os.path.getmtime(resolved)
-        except OSError:
-            pass  # Can't cache — that's fine, we'll just re-read next time
