@@ -77,3 +77,35 @@ def test_load_config_invalid_yaml(tmp_path, monkeypatch):
 
     with pytest.raises((ValueError, yaml.YAMLError)):
         load_config()
+
+
+def test_load_config_tools_allowed_directories(tmp_path, monkeypatch):
+    """Tools allowed_directories are parsed into Path objects."""
+    monkeypatch.setattr("archie.config.ARCHIE_DIR", tmp_path)
+    monkeypatch.setattr("archie.config.CONFIG_PATH", tmp_path / "nextgen.yaml")
+
+    (tmp_path / "nextgen.yaml").write_text(
+        yaml.dump(
+            {
+                "model": "eu.anthropic.claude-sonnet-4-6",
+                "region": "eu-west-1",
+                "tools": {"allowed_directories": ["/tmp/allowed", "/home/user/projects"]},
+            }
+        )
+    )
+
+    config = load_config()
+    from pathlib import Path
+
+    assert len(config.tools.allowed_directories) == 2
+    assert Path("/tmp/allowed") in config.tools.allowed_directories
+    assert Path("/home/user/projects") in config.tools.allowed_directories
+
+
+def test_load_config_tools_default_empty(tmp_path, monkeypatch):
+    """Tools config defaults to empty allowed_directories."""
+    monkeypatch.setattr("archie.config.ARCHIE_DIR", tmp_path)
+    monkeypatch.setattr("archie.config.CONFIG_PATH", tmp_path / "nextgen.yaml")
+
+    config = load_config()
+    assert config.tools.allowed_directories == ()

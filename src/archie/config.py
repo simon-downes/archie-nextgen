@@ -35,6 +35,18 @@ system_prompt: |
 
 
 @dataclass(frozen=True)
+class ToolsConfig:
+    """Configuration for the tool framework.
+
+    Attributes:
+        allowed_directories: Additional absolute paths the model can read/search.
+            The current working directory is always allowed implicitly.
+    """
+
+    allowed_directories: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True)
 class Config:
     """Immutable application configuration.
 
@@ -44,6 +56,7 @@ class Config:
     model: str
     region: str
     system_prompt: str
+    tools: ToolsConfig = ToolsConfig()
 
 
 def load_config() -> Config:
@@ -76,4 +89,9 @@ def load_config() -> Config:
     region = raw.get("region", "eu-west-1")
     system_prompt = raw.get("system_prompt", "You are a helpful assistant.")
 
-    return Config(model=model, region=region, system_prompt=system_prompt)
+    # Parse tools config
+    tools_raw = raw.get("tools", {}) or {}
+    allowed_dirs = tuple(Path(p) for p in tools_raw.get("allowed_directories", []))
+    tools_config = ToolsConfig(allowed_directories=allowed_dirs)
+
+    return Config(model=model, region=region, system_prompt=system_prompt, tools=tools_config)

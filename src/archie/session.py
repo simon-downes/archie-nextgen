@@ -1,7 +1,7 @@
 """Session state and persistence.
 
 A Session represents one conversation. It tracks:
-- The sequence of turns (user messages and assistant responses)
+- The sequence of turns (user messages, assistant responses, tool results)
 - Cumulative token usage and cost
 - Context window utilisation (to warn before hitting limits)
 
@@ -10,9 +10,9 @@ Persistence strategy:
 - raw/{turn-id}.json: full content for large turns (keeps turns.jsonl small)
 - meta.json: summary stats, rewritten after each turn
 
-The split means you can review a session quickly from turns.jsonl without
-loading potentially huge assistant responses. The raw/ directory holds the
-full content when you need it.
+Turn content is stored as a list of ContentBlocks — this supports mixed content
+like text + tool calls in a single assistant response, or tool results that
+need to reference specific tool_use_ids.
 """
 
 import json
@@ -23,19 +23,21 @@ from pathlib import Path
 
 from archie.config import SESSIONS_DIR
 from archie.models import ModelInfo, calculate_cost
+from archie.types import ContentBlock, TextBlock, ToolResultBlock, ToolUseBlock
 
 
 @dataclass
 class Turn:
-    """A single conversational turn (one message from user or assistant).
+    """A single conversational turn.
 
     Attributes:
         id: Sequential identifier (t0001, t0002, ...) for linking to raw files.
-        role: "user" or "assistant" — maps to Bedrock's message roles.
-        content: The full text of the message.
-        input_tokens: Tokens Bedrock reported for this request's input.
+        role: "user" or "assistant" — maps to the LLM's message roles.
+        content: List of content blocks. A simple text message is [TextBlock(text)].
+            An assistant response with tool calls might be [TextBlock, ToolUseBlock, ToolUseBlock].
+            A tool result turn is [ToolResultBlock, ToolResultBlock, ...].
+        input_tokens: Tokens the LLM reported for this request's input.
             Only populated on assistant turns (that's when we get the API response).
-            This number includes ALL prior messages re-sent, not just this turn.
         output_tokens: Tokens the model generated for this response.
         timestamp: ISO 8601 timestamp of when the turn was recorded.
         interrupted: True if the user cancelled generation mid-stream.
@@ -43,11 +45,19 @@ class Turn:
 
     id: str
     role: str
-    content: str
+    content: list[ContentBlock]
     input_tokens: int = 0
     output_tokens: int = 0
     timestamp: str = ""
     interrupted: bool = False
+
+    @property
+    def text(self) -> str:
+        """Extract the text content from this turn (first TextBlock, or empty)."""
+        for block in self.content:
+            if isinstance(block, TextBlock):
+                return block.text
+        return ""
 
 
 @dataclass
@@ -57,7 +67,6 @@ class Session:
     Lifecycle:
     1. Created when the app starts (or when user hits Ctrl+N for new session)
     2. Session directory is NOT created until the first message is sent
-       (avoids empty session dirs from just opening and closing the app)
     3. Each turn is appended to disk immediately (crash-safe)
     4. meta.json is rewritten after each turn with cumulative stats
     """
@@ -69,18 +78,12 @@ class Session:
     total_input_tokens: int = 0
     total_output_tokens: int = 0
 
-    # Private fields (not shown in repr, not part of the public interface)
     _dir: Path | None = field(default=None, repr=False)
     _last_input_tokens: int = field(default=0, repr=False)
     _turn_counter: int = field(default=0, repr=False)
 
     def __post_init__(self):
-        """Generate a session ID if one wasn't provided.
-
-        Format: YYYYMMDD-HHMM-xxxx (date, time, 4 random hex chars).
-        Sortable by date, random suffix prevents collisions if you create
-        two sessions in the same minute.
-        """
+        """Generate a session ID if one wasn't provided."""
         if not self.session_id:
             now = datetime.now(UTC)
             rand = f"{random.randint(0, 0xFFFF):04x}"
@@ -100,14 +103,7 @@ class Session:
 
     @property
     def context_pct(self) -> float:
-        """Estimated context window usage for the NEXT request (0-100).
-
-        Why _last_input_tokens and not a cumulative sum?
-        Because Bedrock is stateless — each request re-sends the entire history.
-        The input_tokens reported by the API already counts the full history.
-        So the next request's context ≈ last_input + last_output (the new
-        assistant response becomes part of the next request's input).
-        """
+        """Estimated context window usage for the NEXT request (0-100)."""
         estimated_next = self._last_input_tokens + (
             self.turns[-1].output_tokens if self.turns else 0
         )
@@ -124,36 +120,35 @@ class Session:
             > self.model_info.max_context_tokens * self.model_info.context_warning_threshold
         )
 
-    @property
-    def messages(self) -> list[dict]:
-        """Return turns in Bedrock's converse API message format.
-
-        Bedrock expects: [{"role": "user", "content": [{"text": "..."}]}, ...]
-        The content is a list of "content blocks" — currently just text,
-        but will include toolUse/toolResult blocks when we add tools.
-        """
-        return [{"role": t.role, "content": [{"text": t.content}]} for t in self.turns]
-
     def add_turn(
         self,
         role: str,
-        content: str,
+        content: str | list[ContentBlock],
         input_tokens: int = 0,
         output_tokens: int = 0,
         interrupted: bool = False,
     ) -> Turn:
         """Record a new turn and persist it to disk.
 
-        Called twice per exchange:
-        1. User turn: role="user", content=what they typed, no token counts
-        2. Assistant turn: role="assistant", content=model's response,
-           input/output tokens from the API response
+        Args:
+            role: "user" or "assistant"
+            content: Either a plain string (wrapped in [TextBlock]) or a list
+                of ContentBlocks for multi-block turns (tool calls, tool results).
+            input_tokens: Token count from the LLM API response.
+            output_tokens: Token count from the LLM API response.
+            interrupted: Whether generation was cancelled mid-stream.
         """
+        # Convenience: accept plain string and wrap in TextBlock
+        if isinstance(content, str):
+            blocks = [TextBlock(text=content)]
+        else:
+            blocks = content
+
         self._turn_counter += 1
         turn = Turn(
             id=f"t{self._turn_counter:04d}",
             role=role,
-            content=content,
+            content=blocks,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             timestamp=datetime.now(UTC).isoformat(),
@@ -163,8 +158,6 @@ class Session:
         self.total_input_tokens += input_tokens
         self.total_output_tokens += output_tokens
 
-        # Track the most recent input token count for context_pct calculation.
-        # Only update when we actually have a count (assistant turns from Bedrock).
         if input_tokens > 0:
             self._last_input_tokens = input_tokens
 
@@ -178,16 +171,11 @@ class Session:
         (self.dir / "raw").mkdir(exist_ok=True)
 
     def _persist_turn(self, turn: Turn) -> None:
-        """Append a turn to turns.jsonl and optionally write raw content.
-
-        turns.jsonl gets a summary (first 200 chars) — enough to scan the
-        session without loading full responses. If the content exceeds 500
-        chars, the full text goes to raw/{turn-id}.json.
-        """
+        """Append a turn to turns.jsonl and optionally write raw content."""
         self._ensure_dir()
 
-        # Truncate for the summary log — full content is in raw/ if needed
-        summary = turn.content[:200] if len(turn.content) <= 200 else turn.content[:197] + "..."
+        # Build a summary for the JSONL log
+        summary = self._summarise_content(turn.content)
         entry = {
             "id": turn.id,
             "ts": turn.timestamp,
@@ -198,22 +186,17 @@ class Session:
             "interrupted": turn.interrupted,
         }
 
-        # Append-only write — crash-safe, no corruption of previous entries
         with (self.dir / "turns.jsonl").open("a") as f:
             f.write(json.dumps(entry) + "\n")
 
-        # Write full content to a separate file for large turns.
-        # 500 chars is roughly where a response becomes too long to skim in JSONL.
-        if len(turn.content) > 500:
+        # Write full content to raw/ for large turns
+        serialized = _serialize_blocks(turn.content)
+        if len(json.dumps(serialized)) > 500:
             raw_path = self.dir / "raw" / f"{turn.id}.json"
-            raw_path.write_text(json.dumps({"content": turn.content}))
+            raw_path.write_text(json.dumps({"content": serialized}, indent=2))
 
     def _save_meta(self) -> None:
-        """Rewrite meta.json with current session stats.
-
-        This is NOT append-only — it's rewritten every turn because it
-        contains cumulative totals. It's the "at a glance" file for a session.
-        """
+        """Rewrite meta.json with current session stats."""
         self._ensure_dir()
         meta = {
             "session_id": self.session_id,
@@ -226,3 +209,59 @@ class Session:
             "total_cost": round(self.total_cost, 6),
         }
         (self.dir / "meta.json").write_text(json.dumps(meta, indent=2))
+
+    @staticmethod
+    def _summarise_content(blocks: list[ContentBlock], max_len: int = 200) -> str:
+        """Create a short summary of content blocks for the JSONL log.
+
+        For text: first 200 chars.
+        For tool_use: "tool: <name>(<args summary>)"
+        For tool_result: "result: <first 100 chars>"
+        """
+        parts = []
+        for block in blocks:
+            if isinstance(block, TextBlock):
+                text = block.text[:max_len]
+                if len(block.text) > max_len:
+                    text = text[: max_len - 3] + "..."
+                parts.append(text)
+            elif isinstance(block, ToolUseBlock):
+                args_str = json.dumps(block.input)[:80]
+                parts.append(f"tool: {block.name}({args_str})")
+            elif isinstance(block, ToolResultBlock):
+                status = "error" if block.is_error else "ok"
+                parts.append(f"result[{status}]: {block.content[:100]}")
+        return " | ".join(parts)[:max_len]
+
+
+def _serialize_blocks(blocks: list[ContentBlock]) -> list[dict]:
+    """Serialize content blocks to JSON-compatible dicts with type discriminators.
+
+    Format:
+        TextBlock       → {"type": "text", "text": "..."}
+        ToolUseBlock    → {"type": "tool_use", "id": "...", "name": "...", "input": {...}}
+        ToolResultBlock → {"type": "tool_result", "id": "...", "content": "...", "is_error": bool}
+    """
+    result = []
+    for block in blocks:
+        if isinstance(block, TextBlock):
+            result.append({"type": "text", "text": block.text})
+        elif isinstance(block, ToolUseBlock):
+            result.append(
+                {
+                    "type": "tool_use",
+                    "id": block.tool_use_id,
+                    "name": block.name,
+                    "input": block.input,
+                }
+            )
+        elif isinstance(block, ToolResultBlock):
+            result.append(
+                {
+                    "type": "tool_result",
+                    "id": block.tool_use_id,
+                    "content": block.content,
+                    "is_error": block.is_error,
+                }
+            )
+    return result

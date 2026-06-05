@@ -1,0 +1,237 @@
+"""Tests for tool registry and file tools."""
+
+from unittest.mock import patch
+
+import pytest
+
+from archie.tools import ToolRegistry, ToolSpec, truncate_result, validate_path
+from archie.tools.read_file import make_read_file_spec
+from archie.tools.search_files import make_search_files_spec
+
+# --- validate_path tests ---
+
+
+class TestValidatePath:
+    def test_allows_file_under_cwd(self, tmp_path):
+        """Files under cwd are allowed."""
+        f = tmp_path / "test.py"
+        f.touch()
+        result = validate_path("test.py", tmp_path, [])
+        assert result == f
+
+    def test_allows_file_under_allowed_dir(self, tmp_path):
+        """Files under explicitly allowed directories are allowed."""
+        other = tmp_path / "other"
+        other.mkdir()
+        f = other / "file.txt"
+        f.touch()
+        result = validate_path(str(f), tmp_path, [other])
+        assert result == f
+
+    def test_rejects_file_outside_allowed(self, tmp_path):
+        """Files outside all allowed directories raise ValueError."""
+        with pytest.raises(ValueError, match="outside allowed directories"):
+            validate_path("/etc/passwd", tmp_path, [])
+
+    def test_resolves_relative_paths(self, tmp_path):
+        """Relative paths are resolved relative to cwd."""
+        sub = tmp_path / "src"
+        sub.mkdir()
+        f = sub / "main.py"
+        f.touch()
+        result = validate_path("src/main.py", tmp_path, [])
+        assert result == f
+
+    def test_blocks_symlink_escape(self, tmp_path):
+        """Symlinks that resolve outside allowed dirs are blocked."""
+        link = tmp_path / "sneaky"
+        link.symlink_to("/etc")
+        with pytest.raises(ValueError, match="outside allowed directories"):
+            validate_path("sneaky/passwd", tmp_path, [])
+
+
+# --- truncate_result tests ---
+
+
+class TestTruncateResult:
+    def test_short_content_unchanged(self):
+        assert truncate_result("hello", max_chars=100) == "hello"
+
+    def test_long_content_truncated(self):
+        content = "x" * 5000
+        result = truncate_result(content, max_chars=100)
+        assert len(result) < 200
+        assert "[...truncated, 5000 chars total]" in result
+
+    def test_default_limit_is_4000(self):
+        content = "x" * 4001
+        result = truncate_result(content)
+        assert "[...truncated" in result
+
+
+# --- ToolRegistry tests ---
+
+
+class TestToolRegistry:
+    def test_register_and_get(self):
+        registry = ToolRegistry()
+        spec = ToolSpec(name="test", description="A test", schema={}, handler=lambda p: "ok")
+        registry.register(spec)
+        assert registry.get("test") is spec
+
+    def test_get_unknown_returns_none(self):
+        registry = ToolRegistry()
+        assert registry.get("unknown") is None
+
+    def test_duplicate_name_raises(self):
+        registry = ToolRegistry()
+        spec = ToolSpec(name="test", description="A test", schema={}, handler=lambda p: "ok")
+        registry.register(spec)
+        with pytest.raises(ValueError, match="already registered"):
+            registry.register(spec)
+
+    def test_to_tool_config_format(self):
+        registry = ToolRegistry()
+        spec = ToolSpec(
+            name="my_tool",
+            description="Does stuff",
+            schema={"type": "object", "properties": {}},
+            handler=lambda p: "ok",
+        )
+        registry.register(spec)
+        config = registry.to_tool_config()
+        assert len(config) == 1
+        assert config[0]["toolSpec"]["name"] == "my_tool"
+        assert config[0]["toolSpec"]["description"] == "Does stuff"
+        assert config[0]["toolSpec"]["inputSchema"] == {
+            "json": {"type": "object", "properties": {}}
+        }
+
+
+# --- read_file tool tests ---
+
+
+class TestReadFile:
+    @pytest.fixture
+    def tool(self, tmp_path):
+        """Create a read_file tool bound to tmp_path."""
+        return make_read_file_spec(tmp_path, [])
+
+    def test_reads_file_with_line_numbers(self, tmp_path, tool):
+        """Output includes line numbers in '  N|content' format."""
+        f = tmp_path / "test.py"
+        f.write_text("line1\nline2\nline3\n")
+        result = tool.handler({"path": "test.py"})
+        assert "    1|line1" in result
+        assert "    2|line2" in result
+        assert "    3|line3" in result
+
+    def test_reads_with_offset_and_limit(self, tmp_path, tool):
+        """Pagination via offset/limit works correctly."""
+        f = tmp_path / "big.txt"
+        f.write_text("\n".join(f"line{i}" for i in range(1, 101)))
+        result = tool.handler({"path": "big.txt", "offset": 10, "limit": 5})
+        assert "   11|line11" in result
+        assert "   15|line15" in result
+        assert "line16" not in result
+        assert "Use offset=15 to continue reading" in result
+
+    def test_rejects_path_outside_allowed(self, tmp_path, tool):
+        """Paths outside allowed directories return an error."""
+        result = tool.handler({"path": "/etc/passwd"})
+        assert "Error:" in result
+        assert "outside allowed directories" in result
+
+    def test_detects_binary_file(self, tmp_path, tool):
+        """Binary files (containing null bytes) are rejected."""
+        f = tmp_path / "binary.dat"
+        f.write_bytes(b"some text\x00more bytes")
+        result = tool.handler({"path": "binary.dat"})
+        assert "Error:" in result
+        assert "Binary file" in result
+
+    def test_caps_line_length(self, tmp_path, tool):
+        """Lines exceeding 500 chars are truncated."""
+        f = tmp_path / "long.txt"
+        f.write_text("x" * 600 + "\n")
+        result = tool.handler({"path": "long.txt"})
+        assert "...[truncated]" in result
+
+    def test_shows_total_lines_in_header(self, tmp_path, tool):
+        """Header shows total line count."""
+        f = tmp_path / "test.txt"
+        f.write_text("a\nb\nc\n")
+        result = tool.handler({"path": "test.txt"})
+        assert "3 lines" in result
+
+    def test_nonexistent_file(self, tmp_path, tool):
+        """Non-existent file returns error."""
+        result = tool.handler({"path": "nope.txt"})
+        assert "Error:" in result
+        assert "Not a file" in result
+
+    def test_pagination_hint_when_truncated(self, tmp_path, tool):
+        """Shows pagination hint when there are more lines."""
+        f = tmp_path / "big.txt"
+        f.write_text("\n".join(f"line{i}" for i in range(600)))
+        result = tool.handler({"path": "big.txt", "limit": 10})
+        assert "Use offset=10 to continue reading" in result
+        assert "Showing lines 1-10 of 600" in result
+
+
+# --- search_files tool tests ---
+
+
+class TestSearchFiles:
+    @pytest.fixture
+    def tool(self, tmp_path):
+        """Create a search_files tool bound to tmp_path."""
+        return make_search_files_spec(tmp_path, [])
+
+    def test_finds_matches(self, tmp_path, tool):
+        """Finds matching lines in files."""
+        f = tmp_path / "test.py"
+        f.write_text("def hello():\n    pass\n\ndef world():\n    pass\n")
+        result = tool.handler({"pattern": "def", "path": "."})
+        assert "def hello" in result
+        assert "def world" in result
+
+    def test_respects_glob_filter(self, tmp_path, tool):
+        """Glob filter restricts search to matching files."""
+        (tmp_path / "a.py").write_text("target\n")
+        (tmp_path / "b.txt").write_text("target\n")
+        result = tool.handler({"pattern": "target", "path": ".", "glob": "*.py"})
+        assert "a.py" in result
+        assert "b.txt" not in result
+
+    def test_no_matches_message(self, tmp_path, tool):
+        """Returns a clean message when no matches found."""
+        (tmp_path / "test.py").write_text("nothing here\n")
+        result = tool.handler({"pattern": "nonexistent_xyz", "path": "."})
+        assert "No matches found" in result
+
+    def test_rejects_path_outside_allowed(self, tmp_path, tool):
+        """Search paths outside allowed directories return error."""
+        result = tool.handler({"pattern": "test", "path": "/etc"})
+        assert "Error:" in result
+        assert "outside allowed directories" in result
+
+    def test_empty_pattern_returns_error(self, tmp_path, tool):
+        """Empty pattern returns an error."""
+        result = tool.handler({"pattern": ""})
+        assert "Error:" in result
+
+    def test_pagination_cap(self, tmp_path, tool):
+        """Results are capped and show pagination hint when truncated."""
+        # Create a file with many matches
+        content = "\n".join(f"match_{i}" for i in range(100))
+        (tmp_path / "many.txt").write_text(content)
+        result = tool.handler({"pattern": "match_", "path": ".", "limit": 5})
+        assert "Use offset=" in result
+
+    def test_rg_not_installed(self, tmp_path, tool):
+        """Handles missing ripgrep gracefully."""
+        with patch("archie.tools.search_files.subprocess.run", side_effect=FileNotFoundError):
+            result = tool.handler({"pattern": "test", "path": "."})
+        assert "Error:" in result
+        assert "not installed" in result

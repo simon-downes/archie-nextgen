@@ -132,15 +132,6 @@ class StreamingMessage(Widget):
         """Append a text chunk. Triggers reactive update."""
         self.text += chunk
 
-    def finalise(self) -> "AssistantMessage":
-        """Convert to a finalised AssistantMessage (currently unused).
-
-        The Conversation.finalise_streaming() method creates its own
-        AssistantMessage rather than calling this, but it documents the
-        relationship between the two widget types.
-        """
-        return AssistantMessage(self.text)
-
 
 class ErrorMessage(Static):
     """An error message block with red styling.
@@ -160,6 +151,76 @@ class ErrorMessage(Static):
 
     def __init__(self, content: str) -> None:
         super().__init__(f"[bold red]✗ Error[/]\n{content}")
+
+
+class ToolCallMessage(Widget):
+    """A tool call block showing tool name, arguments, and result.
+
+    Visually distinct from text messages — uses muted colours and monospace
+    formatting so the user can see tool activity in the conversation flow
+    without it being confused for model-generated text.
+
+    Structure:
+        🔧 tool_name(args)
+        ─────────────────
+        result content
+    """
+
+    DEFAULT_CSS = """
+    ToolCallMessage {
+        padding: 1 2;
+        margin: 1 0;
+        background: $surface;
+        height: auto;
+    }
+    ToolCallMessage > .tool-header {
+        color: $text-muted;
+        text-style: bold;
+        height: auto;
+    }
+    ToolCallMessage > .tool-args {
+        color: $text-muted;
+        height: auto;
+        margin: 0 0 0 2;
+    }
+    ToolCallMessage > .tool-result {
+        color: $text-muted;
+        height: auto;
+        margin: 1 0 0 2;
+        max-height: 20;
+        overflow-y: auto;
+    }
+    ToolCallMessage > .tool-error {
+        color: $error;
+        height: auto;
+        margin: 1 0 0 2;
+    }
+    """
+
+    def __init__(self, name: str, args: dict, result: str = "", is_error: bool = False) -> None:
+        super().__init__()
+        self._name = name
+        self._args = args
+        self._result = result
+        self._is_error = is_error
+
+    def compose(self):
+        import json
+
+        yield Static(f"🔧 {self._name}", classes="tool-header")
+        # Show args in compact JSON format
+        args_str = json.dumps(self._args, indent=None)
+        if len(args_str) > 200:
+            args_str = args_str[:200] + "..."
+        yield Static(args_str, classes="tool-args")
+        # Show result (or placeholder until result arrives)
+        if self._result:
+            css_class = "tool-error" if self._is_error else "tool-result"
+            # Cap displayed result to avoid UI overload
+            display_result = self._result[:2000]
+            if len(self._result) > 2000:
+                display_result += "\n..."
+            yield Static(display_result, classes=css_class)
 
 
 class Conversation(VerticalScroll):
@@ -189,6 +250,11 @@ class Conversation(VerticalScroll):
     def add_assistant_message(self, content: str) -> None:
         """Add a complete assistant message (used for session replay, not streaming)."""
         self.mount(AssistantMessage(content))
+        self.scroll_end(animate=False)
+
+    def add_tool_call(self, name: str, args: dict, result: str, is_error: bool) -> None:
+        """Add a complete tool call block showing name, args, and result."""
+        self.mount(ToolCallMessage(name, args, result, is_error))
         self.scroll_end(animate=False)
 
     def begin_streaming(self) -> StreamingMessage:

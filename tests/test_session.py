@@ -5,7 +5,8 @@ import json
 import pytest
 
 from archie.models import get_model_info
-from archie.session import Session
+from archie.session import Session, _serialize_blocks
+from archie.types import TextBlock, ToolResultBlock, ToolUseBlock
 
 
 @pytest.fixture
@@ -25,6 +26,27 @@ def test_session_id_format(session):
     assert len(parts[2]) == 4  # hex
 
 
+def test_add_turn_with_string(session):
+    """Adding a turn with a plain string wraps it in TextBlock."""
+    turn = session.add_turn("user", "hello")
+    assert len(turn.content) == 1
+    assert isinstance(turn.content[0], TextBlock)
+    assert turn.content[0].text == "hello"
+
+
+def test_add_turn_with_content_blocks(session):
+    """Adding a turn with explicit content blocks preserves them."""
+    blocks = [
+        TextBlock(text="Let me read that file."),
+        ToolUseBlock(tool_use_id="tu_123", name="read_file", input={"path": "foo.py"}),
+    ]
+    turn = session.add_turn("assistant", blocks)
+    assert len(turn.content) == 2
+    assert isinstance(turn.content[0], TextBlock)
+    assert isinstance(turn.content[1], ToolUseBlock)
+    assert turn.content[1].name == "read_file"
+
+
 def test_add_turn_persists_jsonl(session):
     """Adding a turn writes to turns.jsonl."""
     session.add_turn("user", "hello", input_tokens=10)
@@ -38,18 +60,19 @@ def test_add_turn_persists_jsonl(session):
 
 
 def test_add_turn_writes_raw_for_large_content(session):
-    """Content > 500 chars gets a raw file."""
+    """Content > 500 chars serialized gets a raw file."""
     big_content = "x" * 600
     session.add_turn("assistant", big_content, output_tokens=100)
 
     raw_file = session.dir / "raw" / "t0001.json"
     assert raw_file.exists()
     raw = json.loads(raw_file.read_text())
-    assert raw["content"] == big_content
+    assert raw["content"][0]["type"] == "text"
+    assert raw["content"][0]["text"] == big_content
 
 
 def test_add_turn_no_raw_for_small_content(session):
-    """Content <= 500 chars does not get a raw file."""
+    """Small content does not get a raw file."""
     session.add_turn("user", "short message", input_tokens=5)
 
     raw_file = session.dir / "raw" / "t0001.json"
@@ -81,13 +104,12 @@ def test_token_tracking(session):
 def test_cost_calculation(session):
     """Cost uses model pricing."""
     session.add_turn("user", "test", input_tokens=1_000_000)
-    # Sonnet: $3/M input
+    # Sonnet 4.6: $3/M input
     assert abs(session.total_cost - 3.0) < 0.001
 
 
 def test_context_pct(session):
     """Context percentage estimates next request size."""
-    # Assistant turn with input_tokens = what Bedrock reported for that request
     session.add_turn("user", "test")
     session.add_turn("assistant", "reply", input_tokens=500_000, output_tokens=500_000)
     # Next request ≈ last input (500K) + last output (500K) = 1M = 100%
@@ -107,16 +129,6 @@ def test_context_warning(session):
     assert session.context_warning
 
 
-def test_messages_format(session):
-    """Messages returns Bedrock-compatible format."""
-    session.add_turn("user", "hello")
-    session.add_turn("assistant", "hi there")
-
-    msgs = session.messages
-    assert msgs[0] == {"role": "user", "content": [{"text": "hello"}]}
-    assert msgs[1] == {"role": "assistant", "content": [{"text": "hi there"}]}
-
-
 def test_summary_truncation(session):
     """JSONL summary truncates long content."""
     long_content = "a" * 300
@@ -126,3 +138,48 @@ def test_summary_truncation(session):
     entry = json.loads(jsonl.read_text().strip())
     assert len(entry["summary"]) == 200
     assert entry["summary"].endswith("...")
+
+
+def test_summary_tool_use(session):
+    """JSONL summary for tool_use turns shows tool name."""
+    blocks = [ToolUseBlock(tool_use_id="tu_1", name="read_file", input={"path": "x.py"})]
+    session.add_turn("assistant", blocks)
+
+    jsonl = session.dir / "turns.jsonl"
+    entry = json.loads(jsonl.read_text().strip())
+    assert "read_file" in entry["summary"]
+
+
+def test_serialize_blocks():
+    """Content blocks serialize with type discriminators."""
+    blocks = [
+        TextBlock(text="hello"),
+        ToolUseBlock(tool_use_id="tu_1", name="read_file", input={"path": "x.py"}),
+        ToolResultBlock(tool_use_id="tu_1", content="content", is_error=False),
+    ]
+    serialized = _serialize_blocks(blocks)
+
+    assert serialized[0] == {"type": "text", "text": "hello"}
+    assert serialized[1] == {
+        "type": "tool_use",
+        "id": "tu_1",
+        "name": "read_file",
+        "input": {"path": "x.py"},
+    }
+    assert serialized[2] == {
+        "type": "tool_result",
+        "id": "tu_1",
+        "content": "content",
+        "is_error": False,
+    }
+
+
+def test_turn_text_property(session):
+    """Turn.text extracts first TextBlock content."""
+    session.add_turn("user", "hello world")
+    assert session.turns[0].text == "hello world"
+
+    # Turn with no text blocks
+    blocks = [ToolResultBlock(tool_use_id="tu_1", content="result", is_error=False)]
+    session.add_turn("user", blocks)
+    assert session.turns[1].text == ""

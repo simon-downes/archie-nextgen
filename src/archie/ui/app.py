@@ -1,24 +1,19 @@
 """Main Textual application.
 
-This is the orchestrator that wires everything together:
-- UI widgets (conversation, input, status bar)
-- LLM client (sends messages to Bedrock)
-- Session (tracks state and persists to disk)
-
-Architecture note: Currently the orchestration logic (send → stream →
-accumulate → record) lives here in the UI layer. When we add tools (Phase 2),
-we'll extract an Engine class that handles the LLM loop and tool dispatch,
-and the app will just drive the engine and display its events.
+This is the UI layer — it handles display and user interaction only.
+All orchestration logic (LLM calls, tool dispatch, the tool-use loop)
+lives in the Engine. The app runs the engine in a background thread
+and reacts to the events it yields.
 
 Threading model:
 - Textual runs an asyncio event loop on the main thread
-- Bedrock streaming is synchronous (blocks waiting for chunks)
-- We run the stream in a Worker (background thread) and communicate
-  back to the UI via Textual's message system (post_message)
-- This keeps the UI responsive while waiting for the model
+- The Engine is a synchronous generator running in a Worker (background thread)
+- Events are posted from the worker to the UI via Textual's message system
+- This keeps the UI responsive while waiting for LLM responses and tool execution
 """
 
 import logging
+from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -27,9 +22,12 @@ from textual.widgets import Footer, TabbedContent, TabPane
 from textual.worker import Worker, get_current_worker
 
 from archie.config import load_config
-from archie.llm import BedrockClient, Done, TextDelta, Usage
+from archie.engine import Engine
+from archie.llm import BedrockClient
 from archie.models import get_model_info
 from archie.session import Session
+from archie.tools import create_default_registry
+from archie.types import TextDelta, ToolCallResult, ToolCallStart, TurnComplete
 from archie.ui.conversation import Conversation, StreamingMessage
 from archie.ui.input import MessageInput
 from archie.ui.status import StatusBar
@@ -38,9 +36,9 @@ log = logging.getLogger(__name__)
 
 
 # --- Custom Textual Messages ---
-# These are posted from the worker thread to the UI thread.
-# Textual's message system is thread-safe — post_message() from any thread
-# and the handler runs on the main thread where it's safe to update widgets.
+# Posted from the worker thread to the UI thread. Textual's message system
+# is thread-safe — post_message() from any thread and the handler runs on
+# the main thread where it's safe to update widgets.
 
 
 class StreamChunk(Message):
@@ -51,40 +49,58 @@ class StreamChunk(Message):
         self.text = text
 
 
+class ToolStart(Message):
+    """The model is about to call a tool."""
+
+    def __init__(self, tool_use_id: str, name: str, input: dict) -> None:
+        super().__init__()
+        self.tool_use_id = tool_use_id
+        self.name = name
+        self.input = input
+
+
+class ToolResult(Message):
+    """A tool finished executing."""
+
+    def __init__(self, tool_use_id: str, name: str, content: str, is_error: bool) -> None:
+        super().__init__()
+        self.tool_use_id = tool_use_id
+        self.name = name
+        self.content = content
+        self.is_error = is_error
+
+
 class StreamComplete(Message):
-    """Streaming finished (either naturally, interrupted, or on error).
+    """Engine finished processing this user message."""
 
-    input_tokens/output_tokens may be 0 if an error occurred before
-    the API returned usage metadata.
-    """
-
-    def __init__(self, input_tokens: int, output_tokens: int, interrupted: bool = False) -> None:
+    def __init__(
+        self, input_tokens: int, output_tokens: int, stop_reason: str, interrupted: bool = False
+    ) -> None:
         super().__init__()
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
+        self.stop_reason = stop_reason
         self.interrupted = interrupted
 
 
 class ArchieApp(App):
-    """The main Textual application. Manages the UI and orchestrates LLM calls."""
+    """The main Textual application. Manages the UI and drives the Engine."""
 
     TITLE = "Archie"
 
-    # Textual CSS — defines layout and styling for widgets.
-    # Uses Textual's CSS dialect (similar to web CSS but with some differences).
     CSS = """
     Conversation {
-        height: 1fr;       /* Fill available vertical space */
+        height: 1fr;
     }
     StatusBar {
-        height: 1;         /* Exactly one line tall */
+        height: 1;
         padding: 0 2;
         background: $surface;
         color: $text-muted;
     }
     MessageInput {
-        height: auto;      /* Grow with content */
-        max-height: 8;     /* But cap at 8 lines */
+        height: auto;
+        max-height: 8;
         min-height: 1;
         margin: 1 2;
         padding: 0 1;
@@ -92,12 +108,10 @@ class ArchieApp(App):
         border: round $surface-lighten-2;
     }
     MessageInput:focus {
-        border: round $primary;  /* Highlight border when focused */
+        border: round $primary;
     }
     """
 
-    # Key bindings — Textual maps these to action_* methods.
-    # They also auto-populate the Footer widget with hints.
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
         Binding("escape", "cancel", "Cancel"),
@@ -107,38 +121,33 @@ class ArchieApp(App):
     def __init__(self) -> None:
         super().__init__()
 
-        # Load config and set up dependencies.
-        # If config is invalid, this raises and cli.py shows a clean error.
+        # Load config and set up dependencies
         self.config = load_config()
         self.model_info = get_model_info(self.config.model)
         self.llm = BedrockClient(model_id=self.config.model, region=self.config.region)
         self.session = Session(model_id=self.config.model, model_info=self.model_info)
 
-        # Streaming state — tracks the in-progress response
-        self._streaming: StreamingMessage | None = None  # The UI widget being streamed into
-        self._stream_worker: Worker | None = None  # The background thread handle
-        self._stream_text: str = ""  # Accumulated text from all chunks
+        # Create tool registry with configured path access
+        cwd = Path.cwd()
+        allowed = [Path(p) for p in self.config.tools.allowed_directories]
+        self.tool_registry = create_default_registry(cwd, allowed)
+
+        # Create the engine
+        self.engine = Engine(
+            llm_client=self.llm,
+            session=self.session,
+            tool_registry=self.tool_registry,
+            system_prompt=self.config.system_prompt,
+        )
+
+        # Streaming state
+        self._streaming: StreamingMessage | None = None
+        self._stream_worker: Worker | None = None
+        self._stream_text: str = ""
+        self._pending_tool_args: dict[str, dict] = {}  # tool_use_id → args for UI display
 
     def compose(self) -> ComposeResult:
-        """Build the widget tree. Called once when the app starts.
-
-        Layout:
-        ┌─ TabbedContent ─────────────────────────┐
-        │ [Session 1]                              │  ← tab (single for now)
-        │ ┌─ Conversation ───────────────────────┐ │
-        │ │ messages scroll here                 │ │
-        │ └─────────────────────────────────────-┘ │
-        │ ┌─ StatusBar ─────────────────────────-┐ │
-        │ │ model │ tokens │ cost                │ │
-        │ └──────────────────────────────────────┘ │
-        │ ┌─ MessageInput ──────────────────────-┐ │
-        │ │ type here...                         │ │
-        │ └──────────────────────────────────────┘ │
-        └──────────────────────────────────────────┘
-        ┌─ Footer ────────────────────────────────-┐
-        │ Ctrl+Q: Quit │ Esc: Cancel │ ...         │  ← auto-generated from BINDINGS
-        └──────────────────────────────────────────┘
-        """
+        """Build the widget tree."""
         with TabbedContent():
             with TabPane("Session 1"):
                 yield Conversation(id="conversation")
@@ -151,110 +160,82 @@ class ArchieApp(App):
         self._update_status()
         self.query_one("#input", MessageInput).focus()
 
-    # --- Message flow: User submits → Stream → Display ---
+    # --- Message flow: User submits → Engine processes → Display ---
 
     def on_message_input_submitted(self, event: MessageInput.Submitted) -> None:
-        """Handle user pressing Enter in the input box.
-
-        This kicks off the full flow:
-        1. Display the user's message in the conversation
-        2. Record it in the session
-        3. Disable input (prevent double-sends)
-        4. Start streaming the model's response in a background thread
-        """
+        """Handle user pressing Enter in the input box."""
         if self._stream_worker is not None:
-            return  # Already streaming — ignore
+            return  # Already processing — ignore
 
         conv = self.query_one("#conversation", Conversation)
         conv.add_user_message(event.content)
 
-        self.session.add_turn("user", event.content)
-
+        # Disable input until TurnComplete arrives
         self.query_one("#input", MessageInput).disabled = True
 
-        # Reset streaming state and start the worker
+        # Reset streaming state and start the engine worker
         self._stream_text = ""
-        self._streaming = conv.begin_streaming()
-        self._stream_worker = self.run_worker(self._run_stream, thread=True)
+        self._streaming = None
+        self._stream_worker = self.run_worker(lambda: self._run_engine(event.content), thread=True)
 
-    def _run_stream(self) -> None:
-        """Background thread: call Bedrock and post events to the UI.
+    def _run_engine(self, message: str) -> None:
+        """Background thread: run the engine and post events to the UI.
 
-        Runs in a Worker thread (not the main UI thread). Communicates
-        with the UI exclusively via post_message() which is thread-safe.
-
-        The worker checks is_cancelled on each chunk — this is how Esc
-        interrupts generation without killing the thread.
+        The Engine yields events synchronously. We translate them into
+        Textual Messages and post them to the UI thread.
         """
         worker = get_current_worker()
-        input_tokens = 0
-        output_tokens = 0
 
         try:
-            for event in self.llm.stream(
-                messages=self.session.messages,
-                system=self.config.system_prompt,
-            ):
-                # Check cancellation between chunks — cooperative cancellation
+            for event in self.engine.run(message):
                 if worker.is_cancelled:
-                    self.post_message(StreamComplete(input_tokens, output_tokens, interrupted=True))
+                    self.post_message(StreamComplete(0, 0, "interrupted", interrupted=True))
                     return
 
-                if isinstance(event, TextDelta):
-                    self.post_message(StreamChunk(event.text))
-                elif isinstance(event, Usage):
-                    input_tokens = event.input_tokens
-                    output_tokens = event.output_tokens
-                elif isinstance(event, Done):
-                    pass  # We detect completion by the stream ending
-
-            self.post_message(StreamComplete(input_tokens, output_tokens))
+                match event:
+                    case TextDelta(text=text):
+                        self.post_message(StreamChunk(text))
+                    case ToolCallStart(tool_use_id=tid, name=name, input=inp):
+                        self.post_message(ToolStart(tid, name, inp))
+                    case ToolCallResult(tool_use_id=tid, name=name, content=content, is_error=err):
+                        self.post_message(ToolResult(tid, name, content, err))
+                    case TurnComplete(input_tokens=it, output_tokens=ot, stop_reason=sr):
+                        self.post_message(StreamComplete(it, ot, sr))
         except Exception as e:
-            # Log the full traceback for debugging, show clean message to user
-            log.exception("Stream error")
+            log.exception("Engine error")
             self.call_from_thread(self._show_error, str(e))
-            # Signal completion with zero tokens — on_stream_complete won't
-            # record a turn because _stream_text will be empty (or partial)
-            self.post_message(StreamComplete(0, 0, interrupted=True))
+            self.post_message(StreamComplete(0, 0, "error", interrupted=True))
 
     def on_stream_chunk(self, event: StreamChunk) -> None:
         """UI thread: a text chunk arrived. Append it to the streaming widget."""
-        if self._streaming:
-            self._stream_text += event.text
-            self._streaming.append(event.text)
+        conv = self.query_one("#conversation", Conversation)
+        # Create streaming widget on first text chunk
+        if self._streaming is None:
+            self._streaming = conv.begin_streaming()
+        self._stream_text += event.text
+        self._streaming.append(event.text)
+
+    def on_tool_start(self, event: ToolStart) -> None:
+        """UI thread: a tool is about to be called.
+
+        Finalise any in-progress text streaming first. Store the args
+        so we can display them when the result arrives.
+        """
+        self._finalise_streaming()
+        # Store args keyed by tool_use_id for display when result arrives
+        self._pending_tool_args[event.tool_use_id] = event.input
+
+    def on_tool_result(self, event: ToolResult) -> None:
+        """UI thread: a tool finished. Show it in the conversation."""
+        conv = self.query_one("#conversation", Conversation)
+        args = self._pending_tool_args.pop(event.tool_use_id, {})
+        conv.add_tool_call(event.name, args, event.content, event.is_error)
 
     def on_stream_complete(self, event: StreamComplete) -> None:
-        """UI thread: streaming finished. Finalise the response.
+        """UI thread: engine finished processing. Finalise everything."""
+        self._finalise_streaming()
 
-        Steps:
-        1. Replace the streaming widget with a proper Markdown widget
-        2. Record the assistant turn in the session (if there's content)
-        3. Update the status bar with token counts
-        4. Re-enable the input box
-        """
-        conv = self.query_one("#conversation", Conversation)
-
-        # Finalise or remove the streaming widget
-        if self._streaming:
-            if self._stream_text:
-                # Replace plain-text streaming widget with rendered Markdown
-                conv.finalise_streaming(self._streaming)
-            else:
-                # Error before any text arrived — just remove the empty widget
-                self._streaming.remove()
-            self._streaming = None
-
-        # Only record a turn if the model actually produced content.
-        # On errors, _stream_text is empty and we don't want ghost turns.
-        if self._stream_text:
-            self.session.add_turn(
-                "assistant",
-                self._stream_text,
-                input_tokens=event.input_tokens,
-                output_tokens=event.output_tokens,
-                interrupted=event.interrupted,
-            )
-
+        # Update status bar with token counts from the full engine turn
         self._update_status(event.input_tokens, event.output_tokens)
 
         # Re-enable input and give it focus
@@ -264,6 +245,18 @@ class ArchieApp(App):
         inp.focus()
 
     # --- UI helpers ---
+
+    def _finalise_streaming(self) -> None:
+        """Finalise the current streaming widget if one exists."""
+        if self._streaming is None:
+            return
+        conv = self.query_one("#conversation", Conversation)
+        if self._stream_text:
+            conv.finalise_streaming(self._streaming)
+        else:
+            self._streaming.remove()
+        self._streaming = None
+        self._stream_text = ""
 
     def _show_error(self, message: str) -> None:
         """Display an error as a styled block in the conversation."""
@@ -292,6 +285,13 @@ class ArchieApp(App):
     def action_new_session(self) -> None:
         """Ctrl+N pressed — start a fresh conversation."""
         self.session = Session(model_id=self.config.model, model_info=self.model_info)
+        # Recreate engine with new session
+        self.engine = Engine(
+            llm_client=self.llm,
+            session=self.session,
+            tool_registry=self.tool_registry,
+            system_prompt=self.config.system_prompt,
+        )
         conv = self.query_one("#conversation", Conversation)
         conv.remove_children()
         self._update_status()
