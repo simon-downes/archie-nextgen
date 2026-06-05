@@ -208,19 +208,20 @@ class ToolCallMessage(Widget):
         import json
 
         yield Static(f"🔧 {self._name}", classes="tool-header")
-        # Show args in compact JSON format
+        # Show args in compact JSON format — markup=False because args contain
+        # arbitrary text with [] characters that Rich would misinterpret as tags.
         args_str = json.dumps(self._args, indent=None)
         if len(args_str) > 200:
             args_str = args_str[:200] + "..."
-        yield Static(args_str, classes="tool-args")
-        # Show result (or placeholder until result arrives)
+        yield Static(args_str, classes="tool-args", markup=False)
+        # Show result — also markup=False for the same reason (file content,
+        # error messages, etc. can all contain Rich markup characters).
         if self._result:
             css_class = "tool-error" if self._is_error else "tool-result"
-            # Cap displayed result to avoid UI overload
             display_result = self._result[:2000]
             if len(self._result) > 2000:
                 display_result += "\n..."
-            yield Static(display_result, classes=css_class)
+            yield Static(display_result, classes=css_class, markup=False)
 
 
 class Conversation(VerticalScroll):

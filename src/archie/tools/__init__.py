@@ -145,10 +145,12 @@ def create_default_registry(cwd: Path, allowed_directories: list[Path]) -> ToolR
         cwd: Current working directory (for path validation).
         allowed_directories: Additional allowed paths from config.
     """
+    from archie.tools.list_files import make_list_files_spec
     from archie.tools.read_file import make_read_file_spec
     from archie.tools.search_files import make_search_files_spec
 
     registry = ToolRegistry()
+    registry.register(make_list_files_spec(cwd, allowed_directories))
     registry.register(make_read_file_spec(cwd, allowed_directories))
     registry.register(make_search_files_spec(cwd, allowed_directories))
     return registry

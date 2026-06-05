@@ -79,6 +79,11 @@ Essential for long sessions and keeping costs sane.
 - Tool result eviction (replace old tool results with summaries after N turns)
 - Smart file reading (search first → targeted read, not whole files)
 - Conversation compression (summarise older blocks, keep recent verbatim)
+- Code outline tool — returns just signatures + docstrings, not bodies (~90% token
+  reduction for understanding a file's role vs reading the full source). Use tree-sitter
+  or AST parsing to extract classes, functions, imports programmatically. The model
+  uses this for overview tasks ("summarise this project") and read_file for editing tasks.
+- Directory tree tool — structured project overview without reading individual files
 
 ## Phase 9: Skills
 

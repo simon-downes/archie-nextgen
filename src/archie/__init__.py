@@ -5,13 +5,19 @@ is first imported, making it the right place for process-wide setup like logging
 """
 
 import logging
+from pathlib import Path
 
-# Configure logging for the entire application.
-# Level is WARNING by default — only throttle retries and errors show up.
-# Set to DEBUG via code or env var when you need to trace what's happening.
-# The format includes time, logger name (module path), level, and message.
+# Log to a file so we can debug crashes even when the TUI swallows stderr.
+# The file lives alongside sessions in ~/.archie/ for easy access.
+_log_dir = Path.home() / ".archie"
+_log_dir.mkdir(parents=True, exist_ok=True)
+_log_file = _log_dir / "archie.log"
+
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
-    datefmt="%H:%M:%S",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.FileHandler(_log_file),
+    ],
 )
