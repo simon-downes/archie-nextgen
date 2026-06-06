@@ -23,7 +23,7 @@ from textual.message import Message
 from textual.widgets import Footer, TabbedContent, TabPane
 from textual.worker import Worker, get_current_worker
 
-from archie.config import load_config
+from archie.config import Config, load_config
 from archie.engine import Engine
 from archie.llm import BedrockClient
 from archie.models import get_model_info
@@ -33,9 +33,11 @@ from archie.sandbox import Sandbox
 from archie.session import Session
 from archie.tools import create_default_registry
 from archie.types import TextDelta, ToolCallResult, ToolCallStart, TurnComplete
+from archie.ui.commands import ArchieCommands
 from archie.ui.conversation import Conversation, StreamingMessage
 from archie.ui.input import MessageInput
-from archie.ui.status import StatusBar
+from archie.ui.status import StatusBar, _detect_git_branch
+from archie.ui.throbber import Throbber
 
 log = logging.getLogger(__name__)
 
@@ -103,34 +105,20 @@ class ArchieApp(App):
 
     TITLE = "Archie"
 
-    CSS = """
-    Conversation {
-        height: 1fr;
-    }
-    StatusBar {
-        height: 1;
-        padding: 0 2;
-        background: $surface;
-        color: $text-muted;
-    }
-    MessageInput {
-        height: auto;
-        max-height: 8;
-        min-height: 1;
-        margin: 1 2;
-        padding: 0 1;
-        background: $surface;
-        border: round $surface-lighten-2;
-    }
-    MessageInput:focus {
-        border: round $primary;
-    }
-    """
+    # External stylesheet for app-level theme overrides and composition.
+    # Widget base styling stays in DEFAULT_CSS; this adds theme consistency,
+    # tighter spacing, focus indicators, and layout overrides.
+    CSS_PATH = "archie.tcss"
+
+    # Command palette provider — Ctrl+P opens the palette with these commands.
+    # Textual's built-in CommandPalette discovers providers from this set.
+    COMMANDS = {ArchieCommands}
 
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
         Binding("escape", "cancel", "Cancel"),
         Binding("ctrl+n", "new_session", "New Session"),
+        Binding("ctrl+c", "copy_block", "Copy Block"),
     ]
 
     def __init__(self) -> None:
@@ -180,7 +168,12 @@ class ArchieApp(App):
         self._streaming: StreamingMessage | None = None
         self._stream_worker: Worker | None = None
         self._stream_text: str = ""
-        self._pending_tool_args: dict[str, dict] = {}  # tool_use_id → args for UI display
+
+        # Thinking indicator — mounted in conversation while waiting for engine
+        self._throbber: Throbber | None = None
+
+        # Git branch detection — run once at startup on the host (not in container)
+        self._git_branch = _detect_git_branch(self.project_dir)
 
     def compose(self) -> ComposeResult:
         """Build the widget tree."""
@@ -222,6 +215,12 @@ class ArchieApp(App):
 
         conv = self.query_one("#conversation", Conversation)
         conv.add_user_message(event.content)
+
+        # Mount the thinking indicator — shows animated gradient bar while
+        # waiting for the engine to produce its first event
+        self._throbber = Throbber()
+        conv.mount(self._throbber)
+        conv.scroll_end(animate=False)
 
         # Disable input until TurnComplete arrives
         self.query_one("#input", MessageInput).disabled = True
@@ -281,6 +280,7 @@ class ArchieApp(App):
 
     def on_stream_chunk(self, event: StreamChunk) -> None:
         """UI thread: a text chunk arrived. Append it to the streaming widget."""
+        self._remove_throbber()
         conv = self.query_one("#conversation", Conversation)
         # Create streaming widget on first text chunk
         if self._streaming is None:
@@ -291,21 +291,23 @@ class ArchieApp(App):
     def on_tool_start(self, event: ToolStart) -> None:
         """UI thread: a tool is about to be called.
 
-        Finalise any in-progress text streaming first. Store the args
-        so we can display them when the result arrives.
+        Finalise any in-progress text streaming first. Mount a ToolCallMessage
+        in pending state (⌛) — it will be updated when the result arrives.
         """
+        self._remove_throbber()
         self._finalise_streaming()
-        # Store args keyed by tool_use_id for display when result arrives
-        self._pending_tool_args[event.tool_use_id] = event.input
+        # Mount the tool block immediately in pending state
+        conv = self.query_one("#conversation", Conversation)
+        conv.mount_tool_pending(event.tool_use_id, event.name, event.input)
 
     def on_tool_result(self, event: ToolResult) -> None:
-        """UI thread: a tool finished. Show it in the conversation."""
+        """UI thread: a tool finished. Update the pending block with result."""
         conv = self.query_one("#conversation", Conversation)
-        args = self._pending_tool_args.pop(event.tool_use_id, {})
-        conv.add_tool_call(event.name, args, event.content, event.is_error)
+        conv.update_tool_result(event.tool_use_id, event.content, event.is_error)
 
     def on_stream_complete(self, event: StreamComplete) -> None:
         """UI thread: engine finished processing. Finalise everything."""
+        self._remove_throbber()
         self._finalise_streaming()
 
         # Update status bar with token counts from the full engine turn
@@ -331,6 +333,16 @@ class ArchieApp(App):
         self._streaming = None
         self._stream_text = ""
 
+    def _remove_throbber(self) -> None:
+        """Remove the thinking indicator if it's still mounted.
+
+        Called on the first event from the engine — any event means work
+        has started and the throbber should disappear.
+        """
+        if self._throbber is not None:
+            self._throbber.remove()
+            self._throbber = None
+
     def _show_error(self, message: str) -> None:
         """Display an error as a styled block in the conversation."""
         conv = self.query_one("#conversation", Conversation)
@@ -339,6 +351,8 @@ class ArchieApp(App):
     def _update_status(self, turn_input: int = 0, turn_output: int = 0) -> None:
         """Push current stats to the status bar widget."""
         status = self.query_one("#status", StatusBar)
+        status.project_name = self.project_dir.name
+        status.git_branch = self._git_branch
         status.model_name = self.model_info.name
         status.turn_input = turn_input
         status.turn_output = turn_output
@@ -349,6 +363,20 @@ class ArchieApp(App):
         status.warning = self.session.context_warning
 
     # --- Actions (bound to key presses via BINDINGS) ---
+
+    def action_copy_block(self) -> None:
+        """Ctrl+C pressed — copy the focused block's text to clipboard.
+
+        Checks if the currently focused widget has a get_copy_text() method.
+        If so, copies its text content to the system clipboard and shows
+        a toast notification. If no block is focused, does nothing.
+        """
+        focused = self.focused
+        if focused is not None and hasattr(focused, "get_copy_text"):
+            text = focused.get_copy_text()
+            if text:
+                self.copy_to_clipboard(text)
+                self.notify("Copied to clipboard")
 
     def action_cancel(self) -> None:
         """Esc pressed — cancel in-progress generation.
@@ -378,6 +406,15 @@ class ArchieApp(App):
         instance tied to the new session (won't start until first shell exec).
         Recreates the registry and engine with the new sandbox reference.
         """
+        # Cancel any in-progress generation — prevents the old worker from
+        # posting messages after the conversation has been cleared.
+        if self._stream_worker is not None:
+            self._stream_worker.cancel()
+            self.sandbox.cancel()
+            self._stream_worker = None
+            self._streaming = None
+            self._stream_text = ""
+
         # Destroy the old session's container
         self.sandbox.destroy()
 
@@ -411,3 +448,24 @@ class ArchieApp(App):
         conv = self.query_one("#conversation", Conversation)
         conv.remove_children()
         self._update_status()
+
+    def switch_model(self, model_id: str) -> None:
+        """Switch to a different model and start a new session.
+
+        Called from the command palette's "Change Model" command.
+        Updates the LLM client with the new model ID, then delegates
+        to action_new_session to reset everything cleanly.
+        """
+        from archie.models import get_model_info
+
+        self.model_info = get_model_info(model_id)
+        self.config = Config(
+            model=model_id,
+            region=self.config.region,
+            project_root=self.config.project_root,
+            tools=self.config.tools,
+            sandbox=self.config.sandbox,
+        )
+        self.llm = BedrockClient(model_id=model_id, region=self.config.region)
+        self.action_new_session()
+        self.notify(f"Switched to {self.model_info.name}")

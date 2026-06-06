@@ -1,0 +1,147 @@
+/*
+ * archie.tcss — App-level theme overrides and composition.
+ *
+ * Base styling lives in each widget's DEFAULT_CSS (Textual's intended pattern).
+ * This file adds:
+ *   - Consistent dark-theme colour usage via Textual CSS variables
+ *   - Tighter message spacing (border-bottom separators instead of blank lines)
+ *   - :focus styling with a left border "cursor bar" (Toad-style)
+ *   - Layout overrides for the status bar and conversation
+ *
+ * Textual loads this via CSS_PATH on the App class and merges it with
+ * DEFAULT_CSS from individual widgets (this takes higher specificity).
+ */
+
+/* --- Global conversation layout --- */
+Conversation {
+    height: 1fr;
+    padding: 0;
+}
+
+/* --- Message blocks: tighter spacing with border-bottom separators ---
+ * Instead of margin: 1 0 (which adds blank lines), we use 0 margin and
+ * a subtle bottom border to separate messages visually.
+ */
+UserMessage {
+    margin: 0;
+    padding: 1 2;
+    border-bottom: solid $surface-lighten-2;
+}
+
+AssistantMessage {
+    margin: 0;
+    padding: 1 2;
+    border-bottom: solid $surface-lighten-2;
+}
+
+ToolCallMessage {
+    margin: 0;
+    padding: 1 2;
+    border-bottom: solid $surface-lighten-2;
+}
+
+/* --- Collapsible tool block body ---
+ * The body (full args + result) is hidden by default. Adding the
+ * "expanded" class shows it. This keeps tool-heavy sessions clean
+ * while allowing users to inspect details on demand.
+ */
+ToolCallMessage > .tool-body {
+    display: none;
+    height: auto;
+    margin: 1 0 0 2;
+}
+
+ToolCallMessage > .tool-body.expanded {
+    display: block;
+}
+
+ShellOutput {
+    margin: 0;
+    padding: 1 2;
+    border-bottom: solid $surface-lighten-2;
+}
+
+StreamingMessage {
+    margin: 0;
+    padding: 1 2;
+    border-bottom: solid $surface-lighten-2;
+}
+
+ErrorMessage {
+    margin: 0;
+    padding: 1 2;
+    border-bottom: solid $surface-lighten-2;
+}
+
+/* --- Focus styling: left border "cursor bar" ---
+ * When a message block has focus (via click or keyboard navigation),
+ * show a thick left border in the primary accent colour. This gives
+ * a clear visual indicator of which block is selected (Toad-style).
+ */
+UserMessage:focus {
+    border-left: thick $primary;
+}
+
+AssistantMessage:focus {
+    border-left: thick $primary;
+}
+
+ToolCallMessage:focus {
+    border-left: thick $primary;
+}
+
+ShellOutput:focus {
+    border-left: thick $primary;
+}
+
+StreamingMessage:focus {
+    border-left: thick $primary;
+}
+
+ErrorMessage:focus {
+    border-left: thick $primary;
+}
+
+/* --- Status bar layout ---
+ * Horizontal container spanning the full width, with left and right sections.
+ */
+StatusBar {
+    height: 1;
+    background: $surface;
+    color: $text-muted;
+}
+
+StatusBar #status-left {
+    width: auto;
+    padding: 0 2;
+}
+
+StatusBar #status-right {
+    width: 1fr;
+    padding: 0 2;
+    text-align: right;
+}
+
+/* --- Input styling ---
+ * Subtle border that highlights on focus.
+ */
+MessageInput {
+    height: auto;
+    max-height: 8;
+    min-height: 1;
+    margin: 1 2;
+    padding: 0 1;
+    background: $surface;
+    border: round $surface-lighten-2;
+}
+
+MessageInput:focus {
+    border: round $primary;
+}
+
+/* --- Throbber: single-line animated bar above the response --- */
+Throbber {
+    height: 1;
+    margin: 0;
+    padding: 0;
+}

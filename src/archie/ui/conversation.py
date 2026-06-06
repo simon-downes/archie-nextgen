@@ -28,7 +28,11 @@ class UserMessage(Static):
 
     Uses Textual's Rich markup for the header (▶ You in bold cyan).
     The content is rendered as plain text — users don't write markdown.
+    can_focus enables keyboard/click navigation between message blocks.
     """
+
+    # Allow this block to receive focus for keyboard navigation and block copy
+    can_focus = True
 
     DEFAULT_CSS = """
     UserMessage {
@@ -40,6 +44,11 @@ class UserMessage(Static):
 
     def __init__(self, content: str) -> None:
         super().__init__(f"[bold cyan]▶ You[/]\n{content}")
+        self._content = content
+
+    def get_copy_text(self) -> str:
+        """Return the plain text content for clipboard copy."""
+        return self._content
 
 
 class AssistantMessage(Widget):
@@ -47,7 +56,11 @@ class AssistantMessage(Widget):
 
     This is a compound widget: a styled header + a Markdown widget.
     The Markdown widget handles code blocks, lists, bold, etc.
+    can_focus enables keyboard/click navigation between message blocks.
     """
+
+    # Allow this block to receive focus for keyboard navigation and block copy
+    can_focus = True
 
     DEFAULT_CSS = """
     AssistantMessage {
@@ -74,6 +87,10 @@ class AssistantMessage(Widget):
     def compose(self):
         yield Static("● Archie", classes="header")
         yield Markdown(self._content)
+
+    def get_copy_text(self) -> str:
+        """Return the markdown source text for clipboard copy."""
+        return self._content
 
     def update_content(self, content: str) -> None:
         """Update the markdown content after initial render."""
@@ -149,22 +166,46 @@ class ErrorMessage(Static):
     }
     """
 
+    can_focus = True
+
     def __init__(self, content: str) -> None:
         super().__init__(f"[bold red]✗ Error[/]\n{content}")
+        self._content = content
+
+    def get_copy_text(self) -> str:
+        """Return the error text for clipboard copy."""
+        return self._content
 
 
 class ToolCallMessage(Widget):
-    """A tool call block showing tool name, arguments, and result.
+    """A collapsible tool call block with a clickable header and hidden body.
 
-    Visually distinct from text messages — uses muted colours and monospace
-    formatting so the user can see tool activity in the conversation flow
-    without it being confused for model-generated text.
+    The header is always visible and shows the tool name, short args summary,
+    and a status indicator (⌛ pending, ✔ success, ✘ error). The body contains
+    the full arguments and result content, hidden by default to reduce noise
+    in tool-heavy sessions.
 
-    Structure:
-        🔧 tool_name(args)
-        ─────────────────
-        result content
+    Lifecycle:
+    1. Mounted at ToolStart with pending state (⌛) — only header visible
+    2. Updated at ToolResult with success/error state and result content
+    3. Auto-expands on error so failures are always visible
+
+    Toggle expand/collapse:
+    - Click the header
+    - Press Enter or x when the block has focus
+
+    The widget ID is set to the tool_use_id so it can be found and updated
+    when the result arrives (Conversation.update_tool_result uses query_one).
     """
+
+    # Allow this block to receive focus for keyboard navigation and block copy
+    can_focus = True
+
+    # Keybindings for toggling expand/collapse when focused
+    BINDINGS = [
+        ("enter", "toggle_expand", "Toggle"),
+        ("x", "toggle_expand", "Toggle"),
+    ]
 
     DEFAULT_CSS = """
     ToolCallMessage {
@@ -178,50 +219,148 @@ class ToolCallMessage(Widget):
         text-style: bold;
         height: auto;
     }
-    ToolCallMessage > .tool-args {
-        color: $text-muted;
+    ToolCallMessage > .tool-body {
         height: auto;
         margin: 0 0 0 2;
+        display: none;
     }
-    ToolCallMessage > .tool-result {
+    ToolCallMessage > .tool-body.expanded {
+        display: block;
+    }
+    ToolCallMessage > .tool-body > .tool-args {
         color: $text-muted;
         height: auto;
-        margin: 1 0 0 2;
+    }
+    ToolCallMessage > .tool-body > .tool-result {
+        color: $text-muted;
+        height: auto;
+        margin: 1 0 0 0;
         max-height: 20;
         overflow-y: auto;
     }
-    ToolCallMessage > .tool-error {
+    ToolCallMessage > .tool-body > .tool-error {
         color: $error;
         height: auto;
-        margin: 1 0 0 2;
+        margin: 1 0 0 0;
     }
     """
 
-    def __init__(self, name: str, args: dict, result: str = "", is_error: bool = False) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        name: str,
+        args: dict,
+        result: str = "",
+        is_error: bool = False,
+        pending: bool = False,
+        widget_id: str | None = None,
+    ) -> None:
+        # Use tool_use_id as widget ID so we can find this widget later
+        super().__init__(id=widget_id)
         self._name = name
         self._args = args
         self._result = result
         self._is_error = is_error
+        self._pending = pending
+        self._expanded = False
 
     def compose(self):
+        yield Static(self._build_header_text(), classes="tool-header")
+        # Body container — hidden by default via CSS (display: none)
+        body = Static("", classes="tool-body", markup=False)
+        body.update(self._build_body_text())
+        yield body
+
+    def _build_header_text(self) -> str:
+        """Build the header line: ▶/▼ 🔧 tool_name(short_args) status_icon."""
         import json
 
-        yield Static(f"🔧 {self._name}", classes="tool-header")
-        # Show args in compact JSON format — markup=False because args contain
-        # arbitrary text with [] characters that Rich would misinterpret as tags.
+        # Collapse/expand indicator
+        arrow = "▼" if self._expanded else "▶"
+        # Status indicator
+        if self._pending:
+            status = "⌛"
+        elif self._is_error:
+            status = "✘"
+        else:
+            status = "✔"
+        # Short args summary — just the first ~80 chars of compact JSON
         args_str = json.dumps(self._args, indent=None)
-        if len(args_str) > 200:
-            args_str = args_str[:200] + "..."
-        yield Static(args_str, classes="tool-args", markup=False)
-        # Show result — also markup=False for the same reason (file content,
-        # error messages, etc. can all contain Rich markup characters).
+        if len(args_str) > 80:
+            args_str = args_str[:80] + "…"
+        return f"{arrow} 🔧 {self._name}({args_str}) {status}"
+
+    def _build_body_text(self) -> str:
+        """Build the body content: full args + result (if available)."""
+        import json
+
+        parts = []
+        # Full arguments
+        args_str = json.dumps(self._args, indent=2)
+        parts.append(args_str)
+        # Result content (only present after ToolResult arrives)
         if self._result:
-            css_class = "tool-error" if self._is_error else "tool-result"
+            parts.append("─" * 40)
             display_result = self._result[:2000]
             if len(self._result) > 2000:
                 display_result += "\n..."
-            yield Static(display_result, classes=css_class, markup=False)
+            parts.append(display_result)
+        return "\n".join(parts)
+
+    def update_result(self, result: str, is_error: bool) -> None:
+        """Called when ToolResult arrives — update status and content.
+
+        Auto-expands the block on error so failures are always visible.
+        """
+        self._result = result
+        self._is_error = is_error
+        self._pending = False
+        # Auto-expand on error — failed tools should always show their output
+        if is_error:
+            self._expanded = True
+        self._refresh_display()
+
+    def action_toggle_expand(self) -> None:
+        """Toggle the body visibility (bound to Enter and x keys)."""
+        self._expanded = not self._expanded
+        self._refresh_display()
+
+    def on_click(self, event) -> None:
+        """Click on the header toggles expand/collapse.
+
+        We check if the click target is the header widget — clicking in the
+        body area (to read/select result text) should not collapse the block.
+        """
+        # Only toggle if clicking the header, not the body content
+        try:
+            header = self.query_one(".tool-header", Static)
+            if event.widget is header:
+                self._expanded = not self._expanded
+                self._refresh_display()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _refresh_display(self) -> None:
+        """Re-render header text and toggle body visibility."""
+        try:
+            header = self.query_one(".tool-header", Static)
+            header.update(self._build_header_text())
+            body = self.query_one(".tool-body", Static)
+            body.update(self._build_body_text())
+            # Toggle the 'expanded' CSS class to show/hide body
+            body.set_class(self._expanded, "expanded")
+        except Exception:  # noqa: BLE001 — widget may not be mounted yet
+            pass
+
+    def get_copy_text(self) -> str:
+        """Return formatted tool name + args + result for clipboard copy."""
+        import json
+
+        parts = [f"🔧 {self._name}"]
+        parts.append(json.dumps(self._args, indent=2))
+        if self._result:
+            parts.append("─" * 40)
+            parts.append(self._result)
+        return "\n".join(parts)
 
 
 class ShellOutput(Widget):
@@ -231,7 +370,11 @@ class ShellOutput(Widget):
     (not model tool calls). Shows a $ prefix, exit code, and monospace output.
     Output is capped at 2000 chars to prevent the conversation from being
     overwhelmed by verbose command output.
+    can_focus enables keyboard/click navigation between message blocks.
     """
+
+    # Allow this block to receive focus for keyboard navigation and block copy
+    can_focus = True
 
     # Max characters to display from command output.
     _OUTPUT_CAP = 2000
@@ -279,6 +422,13 @@ class ShellOutput(Widget):
             # markup=False — output can contain [] and other Rich-interpreted chars.
             yield Static(display, classes="shell-output", markup=False)
 
+    def get_copy_text(self) -> str:
+        """Return command + output for clipboard copy."""
+        parts = [f"$ {self._command}", f"[exit: {self._exit_code}]"]
+        if self._output:
+            parts.append(self._output)
+        return "\n".join(parts)
+
 
 class Conversation(VerticalScroll):
     """Scrollable container for message blocks.
@@ -310,9 +460,31 @@ class Conversation(VerticalScroll):
         self.scroll_end(animate=False)
 
     def add_tool_call(self, name: str, args: dict, result: str, is_error: bool) -> None:
-        """Add a complete tool call block showing name, args, and result."""
+        """Add a complete tool call block showing name, args, and result.
+
+        Used for session replay where we have the full tool call already.
+        """
         self.mount(ToolCallMessage(name, args, result, is_error))
         self.scroll_end(animate=False)
+
+    def mount_tool_pending(self, tool_use_id: str, name: str, args: dict) -> None:
+        """Mount a tool call block in pending state (⌛) when ToolStart arrives.
+
+        Uses tool_use_id as the widget ID so we can find it later at ToolResult.
+        """
+        self.mount(ToolCallMessage(name, args, pending=True, widget_id=tool_use_id))
+        self.scroll_end(animate=False)
+
+    def update_tool_result(self, tool_use_id: str, result: str, is_error: bool) -> None:
+        """Update a pending tool call block with its result (✔ or ✘).
+
+        Finds the ToolCallMessage by its widget ID (the tool_use_id).
+        """
+        try:
+            widget = self.query_one(f"#{tool_use_id}", ToolCallMessage)
+            widget.update_result(result, is_error)
+        except Exception:  # noqa: BLE001 — widget may have been removed
+            pass
 
     def add_shell_output(self, command: str, output: str, exit_code: int) -> None:
         """Add a user shell command result (from ! prefix).
