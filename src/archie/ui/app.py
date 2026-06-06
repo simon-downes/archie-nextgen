@@ -287,18 +287,28 @@ class ArchieApp(App):
             self._streaming = conv.begin_streaming()
         self._stream_text += event.text
         self._streaming.append(event.text)
+        # Keep conversation scrolled to bottom as content grows —
+        # without this, the streaming widget grows below the visible area.
+        conv.scroll_end(animate=False)
 
     def on_tool_start(self, event: ToolStart) -> None:
         """UI thread: a tool is about to be called.
 
         Finalise any in-progress text streaming first. Mount a ToolCallMessage
         in pending state (⌛) — it will be updated when the result arrives.
+
+        We also update the status bar here because the session has already
+        recorded the LLM call's token usage (add_turn happens in the engine
+        before yielding ToolCallStart). This gives progressive cost feedback
+        during multi-tool turns rather than waiting until the entire turn ends.
         """
         self._remove_throbber()
         self._finalise_streaming()
         # Mount the tool block immediately in pending state
         conv = self.query_one("#conversation", Conversation)
         conv.mount_tool_pending(event.tool_use_id, event.name, event.input)
+        # Update metrics progressively (session totals are already updated)
+        self._update_status()
 
     def on_tool_result(self, event: ToolResult) -> None:
         """UI thread: a tool finished. Update the pending block with result."""

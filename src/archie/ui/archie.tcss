@@ -21,23 +21,30 @@ Conversation {
 /* --- Message blocks: tighter spacing with border-bottom separators ---
  * Instead of margin: 1 0 (which adds blank lines), we use 0 margin and
  * a subtle bottom border to separate messages visually.
+ *
+ * All blocks have a permanent left border — transparent when unfocused,
+ * coloured when focused. This prevents content reflow on focus change
+ * (the space is always reserved).
  */
 UserMessage {
     margin: 0;
     padding: 1 2;
     border-bottom: solid $surface-lighten-2;
+    border-left: thick transparent;
 }
 
 AssistantMessage {
     margin: 0;
     padding: 1 2;
     border-bottom: solid $surface-lighten-2;
+    border-left: thick transparent;
 }
 
 ToolCallMessage {
     margin: 0;
     padding: 1 2;
     border-bottom: solid $surface-lighten-2;
+    border-left: thick transparent;
 }
 
 /* --- Collapsible tool block body ---
@@ -59,18 +66,21 @@ ShellOutput {
     margin: 0;
     padding: 1 2;
     border-bottom: solid $surface-lighten-2;
+    border-left: thick transparent;
 }
 
 StreamingMessage {
     margin: 0;
     padding: 1 2;
     border-bottom: solid $surface-lighten-2;
+    border-left: thick transparent;
 }
 
 ErrorMessage {
     margin: 0;
     padding: 1 2;
     border-bottom: solid $surface-lighten-2;
+    border-left: thick transparent;
 }
 
 /* --- Focus styling: left border "cursor bar" ---
@@ -112,12 +122,12 @@ StatusBar {
 }
 
 StatusBar #status-left {
-    width: auto;
+    width: 1fr;
     padding: 0 2;
 }
 
 StatusBar #status-right {
-    width: 1fr;
+    width: auto;
     padding: 0 2;
     text-align: right;
 }

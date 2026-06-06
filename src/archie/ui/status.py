@@ -78,52 +78,39 @@ class StatusBar(Widget):
             yield Static("", id="status-right")
 
     def _watch_project_name(self) -> None:
-        self._update_left()
+        self._update_right()
 
     def _watch_git_branch(self) -> None:
-        self._update_left()
+        self._update_right()
 
     def _watch_model_name(self) -> None:
-        self._update_right()
+        self._update_left()
 
     def _watch_turn_input(self) -> None:
-        self._update_right()
+        self._update_left()
 
     def _watch_turn_output(self) -> None:
-        self._update_right()
+        self._update_left()
 
     def _watch_total_input(self) -> None:
-        self._update_right()
+        self._update_left()
 
     def _watch_total_output(self) -> None:
-        self._update_right()
+        self._update_left()
 
     def _watch_context_pct(self) -> None:
-        self._update_right()
+        self._update_left()
 
     def _watch_cost(self) -> None:
-        self._update_right()
+        self._update_left()
 
     def _watch_warning(self) -> None:
-        self._update_right()
+        self._update_left()
 
     def _update_left(self) -> None:
-        """Update the left section: project name (branch)."""
+        """Update the left section: model + token metrics."""
         try:
             left = self.query_one("#status-left", Static)
-            left.update(f" {self.project_name} ({self.git_branch})")
-        except Exception:  # noqa: BLE001 — widget may not be mounted yet
-            pass
-
-    def _update_right(self) -> None:
-        """Update the right section: model │ tokens │ context │ cost.
-
-        Format: Claude Sonnet 4.6 │ 1.5K↑ 214↓ │ ctx: 3% │ $0.013
-        ↑ = tokens sent to the model (input)
-        ↓ = tokens received from the model (output)
-        """
-        try:
-            right = self.query_one("#status-right", Static)
         except Exception:  # noqa: BLE001 — widget may not be mounted yet
             return
 
@@ -134,12 +121,20 @@ class StatusBar(Widget):
             if ctx_style
             else f"ctx: {self.context_pct:.0f}%"
         )
-        right.update(
-            f"{self.model_name}"
+        left.update(
+            f" {self.model_name}"
             f" │ {_fmt(self.turn_input)}↑ {_fmt(self.turn_output)}↓"
             f" │ {ctx}"
-            f" │ ${self.cost:.3f} "
+            f" │ ${self.cost:.3f}"
         )
+
+    def _update_right(self) -> None:
+        """Update the right section: project name (branch)."""
+        try:
+            right = self.query_one("#status-right", Static)
+            right.update(f"{self.project_name} ({self.git_branch}) ")
+        except Exception:  # noqa: BLE001 — widget may not be mounted yet
+            pass
 
 
 def _fmt(n: int) -> str:
