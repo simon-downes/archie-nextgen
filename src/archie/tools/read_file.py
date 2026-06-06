@@ -36,17 +36,27 @@ _LINE_LENGTH_CAP = 500
 _DEFAULT_LIMIT = 500
 
 
-def make_read_file_spec(cwd: Path, allowed_directories: list[Path]) -> ToolSpec:
+def make_read_file_spec(
+    cwd: Path, allowed_directories: list[Path], mtime_cache: dict | None = None
+) -> ToolSpec:
     """Create a read_file ToolSpec bound to the given path constraints.
 
     Uses a closure pattern: the handler captures `cwd` and `allowed_directories`
     at registration time. This avoids needing to pass config through the tool
     dispatch system. The mtime cache also lives here as a closure variable —
     it's tool-specific state that doesn't belong in the Engine.
+
+    Args:
+        cwd: Working directory for resolving relative paths.
+        allowed_directories: Additional directories the tool can access.
+        mtime_cache: Optional shared cache dict for mtime dedup. If None,
+            creates a private one. Shared cache allows write tools to
+            invalidate entries when they modify files.
     """
     # Mtime dedup cache: (resolved_path, offset, limit) → mtime
     # If the file hasn't changed since last read with same params, return a stub.
-    _mtime_cache: dict[tuple[str, int, int], float] = {}
+    # When shared with write tools, they can invalidate entries on file modification.
+    _mtime_cache: dict[tuple[str, int, int], float] = mtime_cache if mtime_cache is not None else {}
 
     def handler(params: dict) -> str:
         """Read a file and return line-numbered content.

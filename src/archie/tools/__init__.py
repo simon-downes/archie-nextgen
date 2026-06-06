@@ -153,14 +153,24 @@ def create_default_registry(
         sandbox: Optional Sandbox instance. If provided, the shell tool is
             registered (allowing the model to execute commands in the container).
     """
+    from archie.tools.edit_file import make_edit_file_spec
     from archie.tools.list_files import make_list_files_spec
     from archie.tools.read_file import make_read_file_spec
     from archie.tools.search_files import make_search_files_spec
+    from archie.tools.write_file import make_write_file_spec
 
     registry = ToolRegistry()
+
+    # Shared mtime cache — read_file populates it, write/edit tools invalidate
+    # entries when they modify files. This ensures subsequent reads after a write
+    # return fresh content instead of "file unchanged" stubs.
+    mtime_cache: dict[tuple[str, int, int], float] = {}
+
     registry.register(make_list_files_spec(cwd, allowed_directories))
-    registry.register(make_read_file_spec(cwd, allowed_directories))
+    registry.register(make_read_file_spec(cwd, allowed_directories, mtime_cache))
     registry.register(make_search_files_spec(cwd, allowed_directories))
+    registry.register(make_write_file_spec(cwd, allowed_directories, mtime_cache))
+    registry.register(make_edit_file_spec(cwd, allowed_directories, mtime_cache))
 
     # Shell tool: only registered if a sandbox is available.
     # The sandbox provides the execution environment (Docker container).
