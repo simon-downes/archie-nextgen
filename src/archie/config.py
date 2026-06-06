@@ -4,12 +4,14 @@ Config is intentionally minimal — just the things a user might want to change:
 - model: which Bedrock inference profile to use
 - region: AWS region for API calls
 - system_prompt: personality/instructions for the model
+- project_root: base directory for project detection
+- sandbox: Docker sandbox settings
 
 Model properties (pricing, context limits) are NOT config — they're constants
 in models.py because users can't change them. They're properties of the model.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -28,6 +30,7 @@ SESSIONS_DIR = ARCHIE_DIR / "sessions"
 DEFAULT_CONFIG = """\
 model: "eu.anthropic.claude-sonnet-4-6"
 region: "eu-west-1"
+project_root: "~/dev"
 """
 
 
@@ -44,6 +47,20 @@ class ToolsConfig:
 
 
 @dataclass(frozen=True)
+class SandboxConfig:
+    """Configuration for the Docker sandbox.
+
+    Attributes:
+        image: Docker image name/tag for the sandbox container.
+        mounts: Additional mount specs in "host:container:mode" format.
+            The project dir and standard dotfiles are mounted automatically.
+    """
+
+    image: str = "archie-sandbox:nextgen"
+    mounts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Config:
     """Immutable application configuration.
 
@@ -52,7 +69,9 @@ class Config:
 
     model: str
     region: str
-    tools: ToolsConfig = ToolsConfig()
+    project_root: Path = field(default_factory=lambda: Path.home() / "dev")
+    tools: ToolsConfig = field(default_factory=ToolsConfig)
+    sandbox: SandboxConfig = field(default_factory=SandboxConfig)
 
 
 def load_config() -> Config:
@@ -84,9 +103,25 @@ def load_config() -> Config:
 
     region = raw.get("region", "eu-west-1")
 
+    # Parse project_root — expand ~ to the user's home directory
+    project_root = Path(raw.get("project_root", "~/dev")).expanduser()
+
     # Parse tools config
     tools_raw = raw.get("tools", {}) or {}
     allowed_dirs = tuple(Path(p) for p in tools_raw.get("allowed_directories", []))
     tools_config = ToolsConfig(allowed_directories=allowed_dirs)
 
-    return Config(model=model, region=region, tools=tools_config)
+    # Parse sandbox config
+    sandbox_raw = raw.get("sandbox", {}) or {}
+    sandbox_config = SandboxConfig(
+        image=sandbox_raw.get("image", "archie-sandbox:nextgen"),
+        mounts=tuple(sandbox_raw.get("mounts", [])),
+    )
+
+    return Config(
+        model=model,
+        region=region,
+        project_root=project_root,
+        tools=tools_config,
+        sandbox=sandbox_config,
+    )

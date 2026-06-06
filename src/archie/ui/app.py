@@ -12,7 +12,9 @@ Threading model:
 - This keeps the UI responsive while waiting for LLM responses and tool execution
 """
 
+import atexit
 import logging
+import os
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -25,7 +27,9 @@ from archie.config import load_config
 from archie.engine import Engine
 from archie.llm import BedrockClient
 from archie.models import get_model_info
+from archie.project import detect_project_dir
 from archie.prompt import SYSTEM_PROMPT
+from archie.sandbox import Sandbox
 from archie.session import Session
 from archie.tools import create_default_registry
 from archie.types import TextDelta, ToolCallResult, ToolCallStart, TurnComplete
@@ -128,10 +132,12 @@ class ArchieApp(App):
         self.llm = BedrockClient(model_id=self.config.model, region=self.config.region)
         self.session = Session(model_id=self.config.model, model_info=self.model_info)
 
-        # Create tool registry with configured path access
-        cwd = Path.cwd()
+        # Create tool registry with configured path access.
+        # detect_project_dir finds the project root (e.g. ~/dev/myproject)
+        # even if archie was launched from a subdirectory within it.
+        self.project_dir = detect_project_dir(Path.cwd(), self.config.project_root)
         allowed = [Path(p) for p in self.config.tools.allowed_directories]
-        self.tool_registry = create_default_registry(cwd, allowed)
+        self.tool_registry = create_default_registry(self.project_dir, allowed)
 
         # Create the engine
         self.engine = Engine(
@@ -140,6 +146,20 @@ class ArchieApp(App):
             tool_registry=self.tool_registry,
             system_prompt=SYSTEM_PROMPT,
         )
+
+        # Create sandbox (lazy — container not started until first shell exec).
+        # The sandbox is tied to the session and destroyed on quit/new session.
+        self.sandbox = Sandbox(
+            config=self.config.sandbox,
+            project_dir=self.project_dir,
+            session_id=self.session.session_id,
+            username=os.environ.get("USER", "archie"),
+            uid=os.getuid(),
+        )
+
+        # Safety net: destroy container on unexpected exit (e.g. crash, SIGTERM).
+        # atexit handlers run when the Python interpreter exits normally.
+        atexit.register(self.sandbox.destroy)
 
         # Streaming state
         self._streaming: StreamingMessage | None = None
@@ -283,16 +303,42 @@ class ArchieApp(App):
         if self._stream_worker is not None:
             self._stream_worker.cancel()
 
+    def action_quit(self) -> None:
+        """Ctrl+Q pressed — destroy sandbox container, then exit.
+
+        Ensures no orphaned containers are left running after archie exits.
+        The atexit handler is a backup, but explicit cleanup here is preferred.
+        """
+        self.sandbox.destroy()
+        super().action_quit()
+
     def action_new_session(self) -> None:
-        """Ctrl+N pressed — start a fresh conversation."""
+        """Ctrl+N pressed — start a fresh conversation.
+
+        Destroys the old sandbox container and creates a new lazy Sandbox
+        instance tied to the new session (won't start until first shell exec).
+        """
+        # Destroy the old session's container
+        self.sandbox.destroy()
+
+        # Create new session and engine
         self.session = Session(model_id=self.config.model, model_info=self.model_info)
-        # Recreate engine with new session
         self.engine = Engine(
             llm_client=self.llm,
             session=self.session,
             tool_registry=self.tool_registry,
             system_prompt=SYSTEM_PROMPT,
         )
+
+        # Create new sandbox tied to the new session
+        self.sandbox = Sandbox(
+            config=self.config.sandbox,
+            project_dir=self.project_dir,
+            session_id=self.session.session_id,
+            username=os.environ.get("USER", "archie"),
+            uid=os.getuid(),
+        )
+
         conv = self.query_one("#conversation", Conversation)
         conv.remove_children()
         self._update_status()
