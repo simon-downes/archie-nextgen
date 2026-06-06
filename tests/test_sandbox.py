@@ -2,10 +2,14 @@
 
 All docker commands are mocked — these tests verify the correct commands
 are constructed without actually running containers.
+
+The exec() method uses subprocess.Popen (for killability), so those tests
+mock Popen. The ensure_running() and destroy() methods still use
+subprocess.run, so those tests mock subprocess.run.
 """
 
 import subprocess
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -115,52 +119,104 @@ class TestEnsureRunning:
 
 
 class TestExec:
+    @patch("archie.sandbox.subprocess.Popen")
     @patch("archie.sandbox.subprocess.run")
-    def test_runs_command_in_container(self, mock_run, sandbox):
-        """Verify docker exec command structure."""
-        # First call: ensure_running (docker run), second: the exec
-        mock_run.return_value = subprocess.CompletedProcess([], 0, "hello\n", "")
+    def test_runs_command_in_container(self, mock_run, mock_popen, sandbox):
+        """Verify docker exec command structure via Popen."""
+        # ensure_running uses subprocess.run
+        mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
+
+        # exec uses Popen
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("hello\n", "")
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
 
         output, code = sandbox.exec("echo hello")
 
-        # Second call should be the exec
-        exec_call = mock_run.call_args_list[-1]
-        cmd = exec_call[0][0]
+        # Verify Popen was called with the right docker exec command
+        cmd = mock_popen.call_args[0][0]
         assert cmd[0:2] == ["docker", "exec"]
         assert "archie-abc123" in cmd
         assert "echo hello 2>&1" in cmd
         assert output == "hello\n"
         assert code == 0
 
+    @patch("archie.sandbox.subprocess.Popen")
     @patch("archie.sandbox.subprocess.run")
-    def test_returns_exit_code(self, mock_run, sandbox):
+    def test_returns_exit_code(self, mock_run, mock_popen, sandbox):
         """Non-zero exit codes are passed through."""
         mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
-        sandbox.ensure_running()
 
-        mock_run.return_value = subprocess.CompletedProcess([], 127, "not found\n", "")
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("not found\n", "")
+        mock_proc.returncode = 127
+        mock_popen.return_value = mock_proc
+
         output, code = sandbox.exec("nonexistent")
 
         assert code == 127
         assert "not found" in output
 
+    @patch("archie.sandbox.subprocess.Popen")
     @patch("archie.sandbox.subprocess.run")
-    def test_timeout_returns_partial_output(self, mock_run, sandbox):
-        """Timeout returns partial output and exit code -1."""
-        # First call succeeds (ensure_running)
+    def test_stores_active_process(self, mock_run, mock_popen, sandbox):
+        """During exec(), _active_process is set so cancel() can kill it."""
         mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
-        sandbox.ensure_running()
 
-        # Second call times out
-        mock_run.side_effect = subprocess.TimeoutExpired(
-            cmd=["docker", "exec"], timeout=5, output=b"partial"
-        )
+        captured_process = []
 
-        output, code = sandbox.exec("sleep 100", timeout=5)
+        def fake_communicate():
+            # Capture the active process state mid-exec
+            captured_process.append(sandbox._active_process)
+            return ("output", "")
+
+        mock_proc = MagicMock()
+        mock_proc.communicate.side_effect = fake_communicate
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
+
+        sandbox.exec("test")
+
+        # _active_process was set during communicate()
+        assert captured_process[0] is mock_proc
+        # Cleared after exec returns
+        assert sandbox._active_process is None
+
+    @patch("archie.sandbox.subprocess.Popen")
+    @patch("archie.sandbox.subprocess.run")
+    def test_handles_exception(self, mock_run, mock_popen, sandbox):
+        """Exceptions during Popen return error message with exit code -1."""
+        mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
+        mock_popen.side_effect = OSError("docker not found")
+
+        output, code = sandbox.exec("echo hi")
 
         assert code == -1
-        assert "partial" in output
-        assert "Timed out" in output
+        assert "Error running command" in output
+
+
+class TestCancel:
+    def test_kills_active_process(self, sandbox):
+        """cancel() kills the active Popen process."""
+        mock_proc = MagicMock()
+        sandbox._active_process = mock_proc
+
+        sandbox.cancel()
+
+        mock_proc.kill.assert_called_once()
+
+    def test_noop_when_no_active_process(self, sandbox):
+        """cancel() is safe to call when nothing is running."""
+        sandbox.cancel()  # Should not raise
+
+    def test_handles_oserror(self, sandbox):
+        """cancel() handles OSError if process already exited."""
+        mock_proc = MagicMock()
+        mock_proc.kill.side_effect = OSError("No such process")
+        sandbox._active_process = mock_proc
+
+        sandbox.cancel()  # Should not raise
 
 
 class TestDestroy:

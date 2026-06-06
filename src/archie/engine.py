@@ -22,6 +22,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Generator
+from typing import TYPE_CHECKING
 
 from archie.llm import BedrockClient, Done, ToolUseEvent, Usage
 from archie.llm import TextDelta as LlmTextDelta
@@ -37,6 +38,9 @@ from archie.types import (
     ToolUseBlock,
     TurnComplete,
 )
+
+if TYPE_CHECKING:
+    from archie.sandbox import Sandbox
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +61,7 @@ class Engine:
         session: The conversation session (persists turns to disk).
         tools: Registry of available tools.
         system_prompt: System prompt sent with every LLM call.
+        sandbox: Optional sandbox for cancelling running shell commands on interrupt.
     """
 
     def __init__(
@@ -65,11 +70,15 @@ class Engine:
         session: Session,
         tool_registry: ToolRegistry,
         system_prompt: str,
+        sandbox: "Sandbox | None" = None,
     ):
         self.llm = llm_client
         self.session = session
         self.tools = tool_registry
         self.system_prompt = system_prompt
+        # Stored so we can call sandbox.cancel() when the user interrupts (Esc).
+        # This kills any in-progress docker exec process.
+        self.sandbox = sandbox
 
         # --- Loop prevention state ---
         # Tracks consecutive identical tool calls: (tool_name, args_hash) → count

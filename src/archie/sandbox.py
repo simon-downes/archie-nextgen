@@ -6,6 +6,11 @@ is lazy-started on first exec() and destroyed when the session ends.
 
 All Docker interaction is via subprocess (no docker-py dependency) — keeps
 things simple and avoids version conflicts with the Docker Engine API.
+
+Threading note: exec() uses subprocess.Popen (not subprocess.run) so that
+cancel() can kill the process from another thread (e.g. when the user
+presses Esc). The _active_process attribute is set while a command is
+running and cleared when it finishes.
 """
 
 import subprocess
@@ -44,6 +49,8 @@ class Sandbox:
         self.username = username
         self.uid = uid
         self._running = False
+        # Holds the active Popen process during exec() so cancel() can kill it.
+        self._active_process: subprocess.Popen | None = None
 
     @property
     def container_name(self) -> str:
@@ -94,19 +101,22 @@ class Sandbox:
 
         self._running = True
 
-    def exec(self, command: str, timeout: int = 60) -> tuple[str, int]:
+    def exec(self, command: str) -> tuple[str, int]:
         """Execute a command inside the sandbox container.
 
         Starts the container if not already running (lazy start).
         Combines stdout and stderr via `2>&1` so the model sees all output.
 
+        Uses subprocess.Popen instead of subprocess.run so the process can be
+        killed by cancel() from another thread (e.g. when user presses Esc).
+        No timeout — commands run until completion or cancellation.
+
         Args:
             command: Shell command to execute (passed to bash -c).
-            timeout: Maximum seconds to wait (default 60).
 
         Returns:
-            Tuple of (output_text, exit_code). On timeout, output includes
-            a timeout message and exit_code is -1.
+            Tuple of (output_text, exit_code). If cancelled mid-execution,
+            returns whatever output was captured so far with exit_code -1.
         """
         self.ensure_running()
 
@@ -122,14 +132,33 @@ class Sandbox:
         ]
 
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout, check=False
+            # Start the process and store it so cancel() can kill it.
+            # stdout=PIPE captures output; stderr is redirected to stdout via 2>&1.
+            process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
             )
-            return result.stdout, result.returncode
-        except subprocess.TimeoutExpired as e:
-            # Return whatever output was captured before timeout
-            partial = e.stdout.decode() if e.stdout else ""
-            return f"{partial}\n\n[Timed out after {timeout}s]", -1
+            self._active_process = process
+
+            # Block until the process finishes (or is killed by cancel()).
+            stdout, _stderr = process.communicate()
+            return stdout, process.returncode
+        except Exception as e:
+            return f"Error running command: {e}", -1
+        finally:
+            self._active_process = None
+
+    def cancel(self) -> None:
+        """Kill the active exec process if one is running.
+
+        Called from the UI thread (via Engine) when the user presses Esc.
+        Killing the docker exec process terminates the command inside the
+        container. The exec() method will then return with partial output.
+        """
+        if self._active_process is not None:
+            try:
+                self._active_process.kill()
+            except OSError:
+                pass  # Process already exited — harmless
 
     def destroy(self) -> None:
         """Remove the container. Idempotent — safe to call even if not running.

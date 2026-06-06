@@ -14,6 +14,10 @@ Architecture:
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from archie.sandbox import Sandbox
 
 
 @dataclass
@@ -135,7 +139,9 @@ def tool_error(message: str) -> str:
     return f"Error: {message}"
 
 
-def create_default_registry(cwd: Path, allowed_directories: list[Path]) -> ToolRegistry:
+def create_default_registry(
+    cwd: Path, allowed_directories: list[Path], sandbox: "Sandbox | None" = None
+) -> ToolRegistry:
     """Create a ToolRegistry with the standard tool set.
 
     This is the single place where tools are registered. Adding a new tool
@@ -144,6 +150,8 @@ def create_default_registry(cwd: Path, allowed_directories: list[Path]) -> ToolR
     Args:
         cwd: Current working directory (for path validation).
         allowed_directories: Additional allowed paths from config.
+        sandbox: Optional Sandbox instance. If provided, the shell tool is
+            registered (allowing the model to execute commands in the container).
     """
     from archie.tools.list_files import make_list_files_spec
     from archie.tools.read_file import make_read_file_spec
@@ -153,4 +161,12 @@ def create_default_registry(cwd: Path, allowed_directories: list[Path]) -> ToolR
     registry.register(make_list_files_spec(cwd, allowed_directories))
     registry.register(make_read_file_spec(cwd, allowed_directories))
     registry.register(make_search_files_spec(cwd, allowed_directories))
+
+    # Shell tool: only registered if a sandbox is available.
+    # The sandbox provides the execution environment (Docker container).
+    if sandbox is not None:
+        from archie.tools.shell import make_shell_spec
+
+        registry.register(make_shell_spec(sandbox))
+
     return registry

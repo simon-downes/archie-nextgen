@@ -224,6 +224,62 @@ class ToolCallMessage(Widget):
             yield Static(display_result, classes=css_class, markup=False)
 
 
+class ShellOutput(Widget):
+    """Display widget for user-initiated ! shell commands.
+
+    Visually distinct from ToolCallMessage — this is for direct user commands
+    (not model tool calls). Shows a $ prefix, exit code, and monospace output.
+    Output is capped at 2000 chars to prevent the conversation from being
+    overwhelmed by verbose command output.
+    """
+
+    # Max characters to display from command output.
+    _OUTPUT_CAP = 2000
+
+    DEFAULT_CSS = """
+    ShellOutput {
+        padding: 1 2;
+        margin: 1 0;
+        background: $surface;
+        height: auto;
+    }
+    ShellOutput > .shell-header {
+        color: $text-muted;
+        text-style: bold;
+        height: auto;
+    }
+    ShellOutput > .shell-exit {
+        color: $text-muted;
+        height: auto;
+        margin: 0 0 0 2;
+    }
+    ShellOutput > .shell-output {
+        color: $text-muted;
+        height: auto;
+        margin: 0 0 0 2;
+        max-height: 20;
+        overflow-y: auto;
+    }
+    """
+
+    def __init__(self, command: str, output: str, exit_code: int) -> None:
+        super().__init__()
+        self._command = command
+        self._output = output
+        self._exit_code = exit_code
+
+    def compose(self):
+        yield Static(f"$ {self._command}", classes="shell-header")
+        yield Static(f"[exit: {self._exit_code}]", classes="shell-exit")
+        if self._output:
+            # Cap output to prevent conversation bloat from verbose commands.
+            display = self._output[: self._OUTPUT_CAP]
+            if len(self._output) > self._OUTPUT_CAP:
+                display += "\n..."
+            # markup=False — output can contain [] and other Rich-interpreted chars.
+            yield Static(display, classes="shell-output", markup=False)
+
+
 class Conversation(VerticalScroll):
     """Scrollable container for message blocks.
 
@@ -256,6 +312,15 @@ class Conversation(VerticalScroll):
     def add_tool_call(self, name: str, args: dict, result: str, is_error: bool) -> None:
         """Add a complete tool call block showing name, args, and result."""
         self.mount(ToolCallMessage(name, args, result, is_error))
+        self.scroll_end(animate=False)
+
+    def add_shell_output(self, command: str, output: str, exit_code: int) -> None:
+        """Add a user shell command result (from ! prefix).
+
+        This is NOT recorded in the session — it's purely for display.
+        Distinct from add_tool_call which shows model-initiated tool use.
+        """
+        self.mount(ShellOutput(command, output, exit_code))
         self.scroll_end(animate=False)
 
     def begin_streaming(self) -> StreamingMessage:

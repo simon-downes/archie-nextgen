@@ -88,6 +88,16 @@ class StreamComplete(Message):
         self.interrupted = interrupted
 
 
+class ShellResult(Message):
+    """Result of a user-initiated ! shell command. Posted from the worker thread."""
+
+    def __init__(self, command: str, output: str, exit_code: int) -> None:
+        super().__init__()
+        self.command = command
+        self.output = output
+        self.exit_code = exit_code
+
+
 class ArchieApp(App):
     """The main Textual application. Manages the UI and drives the Engine."""
 
@@ -132,20 +142,11 @@ class ArchieApp(App):
         self.llm = BedrockClient(model_id=self.config.model, region=self.config.region)
         self.session = Session(model_id=self.config.model, model_info=self.model_info)
 
-        # Create tool registry with configured path access.
+        # Create tool registry with configured path access and sandbox.
         # detect_project_dir finds the project root (e.g. ~/dev/myproject)
         # even if archie was launched from a subdirectory within it.
         self.project_dir = detect_project_dir(Path.cwd(), self.config.project_root)
         allowed = [Path(p) for p in self.config.tools.allowed_directories]
-        self.tool_registry = create_default_registry(self.project_dir, allowed)
-
-        # Create the engine
-        self.engine = Engine(
-            llm_client=self.llm,
-            session=self.session,
-            tool_registry=self.tool_registry,
-            system_prompt=SYSTEM_PROMPT,
-        )
 
         # Create sandbox (lazy — container not started until first shell exec).
         # The sandbox is tied to the session and destroyed on quit/new session.
@@ -155,6 +156,20 @@ class ArchieApp(App):
             session_id=self.session.session_id,
             username=os.environ.get("USER", "archie"),
             uid=os.getuid(),
+        )
+
+        # Registry includes the shell tool (bound to sandbox) so the model
+        # can execute commands inside the container.
+        self.tool_registry = create_default_registry(self.project_dir, allowed, self.sandbox)
+
+        # Create the engine — knows about sandbox so it can cancel running
+        # commands when the user presses Esc.
+        self.engine = Engine(
+            llm_client=self.llm,
+            session=self.session,
+            tool_registry=self.tool_registry,
+            system_prompt=SYSTEM_PROMPT,
+            sandbox=self.sandbox,
         )
 
         # Safety net: destroy container on unexpected exit (e.g. crash, SIGTERM).
@@ -184,7 +199,24 @@ class ArchieApp(App):
     # --- Message flow: User submits → Engine processes → Display ---
 
     def on_message_input_submitted(self, event: MessageInput.Submitted) -> None:
-        """Handle user pressing Enter in the input box."""
+        """Handle user pressing Enter in the input box.
+
+        If the message starts with '!', it's a direct shell command — run it
+        in the sandbox without involving the engine. This works even while
+        model generation is in progress (independent of _stream_worker).
+        """
+        content = event.content
+
+        # --- ! prefix: user shell command (independent of engine) ---
+        if content.startswith("!"):
+            command = content[1:].strip()
+            if not command:
+                return  # Bare "!" or "! " — ignore silently
+            # Run in a worker thread so the UI stays responsive.
+            # This is independent of _stream_worker — works during generation.
+            self.run_worker(lambda: self._run_user_shell(command), thread=True)
+            return
+
         if self._stream_worker is not None:
             return  # Already processing — ignore
 
@@ -226,6 +258,26 @@ class ArchieApp(App):
             log.exception("Engine error")
             self.call_from_thread(self._show_error, str(e))
             self.post_message(StreamComplete(0, 0, "error", interrupted=True))
+
+    def _run_user_shell(self, command: str) -> None:
+        """Background thread: run a user ! command in the sandbox.
+
+        Posts a ShellResult message on success or shows an error on failure.
+        This is independent of the engine — runs in its own worker so it
+        works even while model generation is active.
+        """
+        try:
+            self.sandbox.ensure_running()
+            output, exit_code = self.sandbox.exec(command)
+            self.post_message(ShellResult(command, output, exit_code))
+        except Exception as e:
+            log.exception("User shell command failed")
+            self.call_from_thread(self._show_error, f"Shell error: {e}")
+
+    def on_shell_result(self, event: ShellResult) -> None:
+        """UI thread: a user ! command finished. Display the result."""
+        conv = self.query_one("#conversation", Conversation)
+        conv.add_shell_output(event.command, event.output, event.exit_code)
 
     def on_stream_chunk(self, event: StreamChunk) -> None:
         """UI thread: a text chunk arrived. Append it to the streaming widget."""
@@ -299,9 +351,16 @@ class ArchieApp(App):
     # --- Actions (bound to key presses via BINDINGS) ---
 
     def action_cancel(self) -> None:
-        """Esc pressed — cancel in-progress generation."""
+        """Esc pressed — cancel in-progress generation.
+
+        Cancels the worker thread AND kills any running shell command in the
+        sandbox. Both are needed: the worker cancellation stops the engine loop,
+        and sandbox.cancel() kills the docker exec process so exec() returns
+        immediately instead of blocking until the command finishes.
+        """
         if self._stream_worker is not None:
             self._stream_worker.cancel()
+            self.sandbox.cancel()
 
     async def action_quit(self) -> None:
         """Ctrl+Q pressed — destroy sandbox container, then exit.
@@ -317,18 +376,13 @@ class ArchieApp(App):
 
         Destroys the old sandbox container and creates a new lazy Sandbox
         instance tied to the new session (won't start until first shell exec).
+        Recreates the registry and engine with the new sandbox reference.
         """
         # Destroy the old session's container
         self.sandbox.destroy()
 
-        # Create new session and engine
+        # Create new session
         self.session = Session(model_id=self.config.model, model_info=self.model_info)
-        self.engine = Engine(
-            llm_client=self.llm,
-            session=self.session,
-            tool_registry=self.tool_registry,
-            system_prompt=SYSTEM_PROMPT,
-        )
 
         # Create new sandbox tied to the new session
         self.sandbox = Sandbox(
@@ -337,6 +391,19 @@ class ArchieApp(App):
             session_id=self.session.session_id,
             username=os.environ.get("USER", "archie"),
             uid=os.getuid(),
+        )
+
+        # Recreate registry with the new sandbox (shell tool binds to it)
+        allowed = [Path(p) for p in self.config.tools.allowed_directories]
+        self.tool_registry = create_default_registry(self.project_dir, allowed, self.sandbox)
+
+        # Recreate engine with new session, registry, and sandbox
+        self.engine = Engine(
+            llm_client=self.llm,
+            session=self.session,
+            tool_registry=self.tool_registry,
+            system_prompt=SYSTEM_PROMPT,
+            sandbox=self.sandbox,
         )
 
         conv = self.query_one("#conversation", Conversation)
