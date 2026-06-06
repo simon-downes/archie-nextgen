@@ -303,14 +303,14 @@ class ArchieApp(App):
         if self._stream_worker is not None:
             self._stream_worker.cancel()
 
-    def action_quit(self) -> None:
+    async def action_quit(self) -> None:
         """Ctrl+Q pressed — destroy sandbox container, then exit.
 
         Ensures no orphaned containers are left running after archie exits.
         The atexit handler is a backup, but explicit cleanup here is preferred.
         """
         self.sandbox.destroy()
-        super().action_quit()
+        await super().action_quit()
 
     def action_new_session(self) -> None:
         """Ctrl+N pressed — start a fresh conversation.
