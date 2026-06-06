@@ -68,8 +68,9 @@ def make_list_files_spec(cwd: Path, allowed_directories: list[Path]) -> ToolSpec
     return ToolSpec(
         name="list_files",
         description=(
-            "List files in a directory. Optionally filter by glob pattern (e.g. '*.py'). "
-            "Returns file paths only, no content. Respects .gitignore."
+            "List files in a directory. Use the glob parameter to filter by type "
+            "(e.g. '*.py', '**/*.ts'). Always provide a glob when looking for specific "
+            "file types. Returns file paths only, no content. Respects .gitignore."
         ),
         schema={
             "type": "object",

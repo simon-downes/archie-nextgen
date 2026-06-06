@@ -142,7 +142,8 @@ def make_read_file_spec(cwd: Path, allowed_directories: list[Path]) -> ToolSpec:
         name="read_file",
         description=(
             "Read a file's contents with line numbers. Supports pagination via offset/limit. "
-            "Returns line-numbered output for easy reference."
+            "Use limit=5-10 to check file purpose/structure, full read for editing. "
+            "Prefer search_files to find specific content rather than reading entire files."
         ),
         schema={
             "type": "object",

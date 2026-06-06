@@ -14,6 +14,7 @@ running and cleared when it finishes.
 """
 
 import subprocess
+import threading
 from pathlib import Path
 
 from archie.config import SandboxConfig
@@ -51,6 +52,8 @@ class Sandbox:
         self._running = False
         # Holds the active Popen process during exec() so cancel() can kill it.
         self._active_process: subprocess.Popen | None = None
+        # Lock to prevent concurrent ensure_running() calls from starting two containers
+        self._lock = threading.Lock()
 
     @property
     def container_name(self) -> str:
@@ -70,36 +73,41 @@ class Sandbox:
         if self._running:
             return
 
-        # Build mount list: project dir (rw) + standard dotfiles (ro)
-        mounts = self._build_mounts()
+        with self._lock:
+            # Double-check after acquiring lock (another thread may have started it)
+            if self._running:
+                return
 
-        cmd = [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            self.container_name,
-            "--user",
-            f"{self.uid}:{self.uid}",
-            "-w",
-            str(self.project_dir),
-        ]
+            # Build mount list: project dir (rw) + standard dotfiles (ro)
+            mounts = self._build_mounts()
 
-        # Add volume mounts
-        for mount in mounts:
-            cmd.extend(["-v", mount])
+            cmd = [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                self.container_name,
+                "--user",
+                f"{self.uid}:{self.uid}",
+                "-w",
+                str(self.project_dir),
+            ]
 
-        # Add any extra mounts from config
-        for extra in self.config.mounts:
-            cmd.extend(["-v", extra])
+            # Add volume mounts
+            for mount in mounts:
+                cmd.extend(["-v", mount])
 
-        cmd.extend([self.config.image, "sleep", "infinity"])
+            # Add any extra mounts from config
+            for extra in self.config.mounts:
+                cmd.extend(["-v", extra])
 
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to start sandbox container: {result.stderr.strip()}")
+            cmd.extend([self.config.image, "sleep", "infinity"])
 
-        self._running = True
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                raise RuntimeError(f"Failed to start sandbox container: {result.stderr.strip()}")
+
+            self._running = True
 
     def exec(self, command: str) -> tuple[str, int]:
         """Execute a command inside the sandbox container.

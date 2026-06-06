@@ -267,7 +267,7 @@ class ArchieApp(App):
         works even while model generation is active.
         """
         try:
-            self.sandbox.ensure_running()
+            # exec() calls ensure_running() internally (lazy container start)
             output, exit_code = self.sandbox.exec(command)
             self.post_message(ShellResult(command, output, exit_code))
         except Exception as e:
@@ -392,6 +392,8 @@ class ArchieApp(App):
             username=os.environ.get("USER", "archie"),
             uid=os.getuid(),
         )
+        # Re-register atexit for the new sandbox (backup cleanup)
+        atexit.register(self.sandbox.destroy)
 
         # Recreate registry with the new sandbox (shell tool binds to it)
         allowed = [Path(p) for p in self.config.tools.allowed_directories]
