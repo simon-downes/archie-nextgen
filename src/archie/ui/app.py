@@ -128,6 +128,11 @@ class ArchieApp(App):
         self.config = load_config()
         self.model_info = get_model_info(self.config.model)
         self.llm = BedrockClient(model_id=self.config.model, region=self.config.region)
+
+        # detect_project_dir finds the project root (e.g. ~/dev/myproject)
+        # even if archie was launched from a subdirectory within it.
+        self.project_dir = detect_project_dir(Path.cwd(), self.config.project_root)
+
         self.session = Session(
             model_id=self.config.model,
             model_info=self.model_info,
@@ -135,9 +140,6 @@ class ArchieApp(App):
         )
 
         # Create tool registry with configured path access and sandbox.
-        # detect_project_dir finds the project root (e.g. ~/dev/myproject)
-        # even if archie was launched from a subdirectory within it.
-        self.project_dir = detect_project_dir(Path.cwd(), self.config.project_root)
         allowed = [Path(p) for p in self.config.tools.allowed_directories]
 
         # Create sandbox (lazy — container not started until first shell exec).
