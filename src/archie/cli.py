@@ -20,13 +20,18 @@ def check_docker_available() -> None:
     Checks by running `docker info` — this confirms both that docker is
     installed and that the daemon is reachable (user is in docker group).
     """
-    result = subprocess.run(["docker", "info"], capture_output=True, text=True, check=False)
+    try:
+        result = subprocess.run(["docker", "info"], capture_output=True, text=True, check=False)
+    except FileNotFoundError:
+        raise click.ClickException(
+            "Docker is not installed or not in PATH.\n"
+            "Install Docker: https://docs.docker.com/get-docker/"
+        ) from None
     if result.returncode != 0:
         raise click.ClickException(
             "Docker is not available. Ensure:\n"
-            "  1. Docker is installed\n"
-            "  2. Docker daemon is running (sudo systemctl start docker)\n"
-            "  3. Your user is in the docker group (sudo usermod -aG docker $USER)\n"
+            "  1. Docker daemon is running (sudo systemctl start docker)\n"
+            "  2. Your user is in the docker group (sudo usermod -aG docker $USER)\n"
             f"\nDocker error: {result.stderr.strip()}"
         )
 
@@ -66,9 +71,13 @@ def chat():
     except (KeyError, ValueError) as e:
         raise click.ClickException(str(e)) from None
 
-    # Pre-flight checks: verify Docker environment before starting the TUI
-    check_docker_available()
-    check_sandbox_image(config.sandbox.image)
+    # Pre-flight checks: warn if Docker isn't available (shell tool won't work)
+    try:
+        check_docker_available()
+        check_sandbox_image(config.sandbox.image)
+    except click.ClickException as e:
+        click.echo(f"⚠ {e.message}", err=True)
+        click.echo("  Shell tool will not be available this session.\n", err=True)
 
     from archie.ui.app import ArchieApp
 
