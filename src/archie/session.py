@@ -1,46 +1,47 @@
 """Session state and persistence.
 
 A Session represents one conversation. It tracks:
-- The sequence of turns (user messages, assistant responses, tool results)
+- The sequence of turns (for building LLM context)
 - Cumulative token usage and cost
-- Context window utilisation (to warn before hitting limits)
+- Context window utilisation
 
-Persistence strategy:
-- turns.jsonl: append-only log, one JSON line per turn (lightweight, greppable)
-- raw/{turn-id}.json: full content for large turns (keeps turns.jsonl small)
-- meta.json: summary stats, rewritten after each turn
+Persistence: single JSONL file per session at ~/.archie/sessions/{id}.jsonl
+- One line per user turn (everything from prompt → tools → response)
+- Append-only — each turn is flushed when the engine completes it
+- No header — session metadata derivable from filename and turn data
 
-Turn content is stored as a list of ContentBlocks — this supports mixed content
-like text + tool calls in a single assistant response, or tool results that
-need to reference specific tool_use_ids.
+The session ID format is: YYYY-MM-DD-{project}-{hash}
+(e.g. 2026-06-08-archie-nextgen-d8c3b)
+
+In-memory state (session.turns) is separate from persistence (flush_turn).
+add_turn() updates memory for context building. flush_turn() writes to disk.
 """
 
 import json
-import random
+import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ulid import ULID
+
 from archie.config import SESSIONS_DIR
 from archie.models import ModelInfo, calculate_cost
-from archie.types import ContentBlock, TextBlock, ToolResultBlock, ToolUseBlock
+from archie.types import ContentBlock, TextBlock
 
 
 @dataclass
 class Turn:
-    """A single conversational turn.
+    """A single conversational turn (in-memory, for LLM context building).
 
     Attributes:
-        id: Sequential identifier (t0001, t0002, ...) for linking to raw files.
+        id: Sequential identifier (t0001, t0002, ...) for ordering.
         role: "user" or "assistant" — maps to the LLM's message roles.
-        content: List of content blocks. A simple text message is [TextBlock(text)].
-            An assistant response with tool calls might be [TextBlock, ToolUseBlock, ToolUseBlock].
-            A tool result turn is [ToolResultBlock, ToolResultBlock, ...].
-        input_tokens: Tokens the LLM reported for this request's input.
-            Only populated on assistant turns (that's when we get the API response).
-        output_tokens: Tokens the model generated for this response.
-        timestamp: ISO 8601 timestamp of when the turn was recorded.
-        interrupted: True if the user cancelled generation mid-stream.
+        content: List of content blocks.
+        input_tokens: Tokens reported for this request's input.
+        output_tokens: Tokens the model generated.
+        timestamp: ISO 8601 timestamp.
+        interrupted: True if the user cancelled generation.
     """
 
     id: str
@@ -61,40 +62,58 @@ class Turn:
 
 
 @dataclass
+class TurnLog:
+    """Accumulated data for one user turn, written to the JSONL log.
+
+    Built up by the engine during its run loop, then passed to session.flush_turn().
+    """
+
+    when: str
+    user: str
+    assistant_text: str = ""
+    tools: list[dict] = field(default_factory=list)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    model: str = ""
+    interrupted: bool = False
+
+
+@dataclass
 class Session:
     """Manages conversation state and persistence.
 
-    Lifecycle:
-    1. Created when the app starts (or when user hits Ctrl+N for new session)
-    2. Session directory is NOT created until the first message is sent
-    3. Each turn is appended to disk immediately (crash-safe)
-    4. meta.json is rewritten after each turn with cumulative stats
+    In-memory state (turns list) is used for building LLM context.
+    Persistence (flush_turn) writes completed turns to a JSONL file.
+    These are decoupled — add_turn is memory-only, flush_turn is disk-only.
     """
 
     model_id: str
     model_info: ModelInfo
+    project_name: str = ""
     session_id: str = ""
     turns: list[Turn] = field(default_factory=list)
     total_input_tokens: int = 0
     total_output_tokens: int = 0
 
-    _dir: Path | None = field(default=None, repr=False)
     _last_input_tokens: int = field(default=0, repr=False)
     _turn_counter: int = field(default=0, repr=False)
+    _log_path: Path | None = field(default=None, repr=False)
 
     def __post_init__(self):
         """Generate a session ID if one wasn't provided."""
         if not self.session_id:
             now = datetime.now(UTC)
-            rand = f"{random.randint(0, 0xFFFF):04x}"
-            self.session_id = f"{now.strftime('%Y%m%d')}-{now.strftime('%H%M')}-{rand}"
+            date_str = now.strftime("%Y-%m-%d")
+            project = self.project_name or "general"
+            short_hash = secrets.token_hex(3)[:5]
+            self.session_id = f"{date_str}-{project}-{short_hash}"
 
     @property
-    def dir(self) -> Path:
-        """Lazy-computed session directory path."""
-        if self._dir is None:
-            self._dir = SESSIONS_DIR / self.session_id
-        return self._dir
+    def log_path(self) -> Path:
+        """Path to the JSONL log file."""
+        if self._log_path is None:
+            self._log_path = SESSIONS_DIR / f"{self.session_id}.jsonl"
+        return self._log_path
 
     @property
     def total_cost(self) -> float:
@@ -128,17 +147,15 @@ class Session:
         output_tokens: int = 0,
         interrupted: bool = False,
     ) -> Turn:
-        """Record a new turn and persist it to disk.
+        """Record a turn in memory (for LLM context building). Does NOT write to disk.
 
         Args:
             role: "user" or "assistant"
-            content: Either a plain string (wrapped in [TextBlock]) or a list
-                of ContentBlocks for multi-block turns (tool calls, tool results).
-            input_tokens: Token count from the LLM API response.
-            output_tokens: Token count from the LLM API response.
-            interrupted: Whether generation was cancelled mid-stream.
+            content: Plain string (wrapped in [TextBlock]) or list of ContentBlocks.
+            input_tokens: Token count from LLM response.
+            output_tokens: Token count from LLM response.
+            interrupted: Whether generation was cancelled.
         """
-        # Convenience: accept plain string and wrap in TextBlock
         if isinstance(content, str):
             blocks = [TextBlock(text=content)]
         else:
@@ -161,107 +178,72 @@ class Session:
         if input_tokens > 0:
             self._last_input_tokens = input_tokens
 
-        self._persist_turn(turn)
-        self._save_meta()
         return turn
 
-    def _ensure_dir(self) -> None:
-        """Create session directory structure on first write."""
-        self.dir.mkdir(parents=True, exist_ok=True)
-        (self.dir / "raw").mkdir(exist_ok=True)
+    def flush_turn(self, turn_log: TurnLog) -> None:
+        """Write a completed turn to the JSONL log file. Append-only.
 
-    def _persist_turn(self, turn: Turn) -> None:
-        """Append a turn to turns.jsonl and optionally write raw content."""
-        self._ensure_dir()
-
-        # Build a summary for the JSONL log
-        summary = self._summarise_content(turn.content)
-        entry = {
-            "id": turn.id,
-            "ts": turn.timestamp,
-            "role": turn.role,
-            "summary": summary,
-            "input_tokens": turn.input_tokens,
-            "output_tokens": turn.output_tokens,
-            "interrupted": turn.interrupted,
-        }
-
-        with (self.dir / "turns.jsonl").open("a") as f:
-            f.write(json.dumps(entry) + "\n")
-
-        # Write full content to raw/ for large turns
-        serialized = _serialize_blocks(turn.content)
-        if len(json.dumps(serialized)) > 500:
-            raw_path = self.dir / "raw" / f"{turn.id}.json"
-            raw_path.write_text(json.dumps({"content": serialized}, indent=2))
-
-    def _save_meta(self) -> None:
-        """Rewrite meta.json with current session stats."""
-        self._ensure_dir()
-        meta = {
-            "session_id": self.session_id,
-            "model": self.model_id,
-            "created_at": self.turns[0].timestamp if self.turns else None,
-            "updated_at": self.turns[-1].timestamp if self.turns else None,
-            "total_turns": len(self.turns),
-            "total_input_tokens": self.total_input_tokens,
-            "total_output_tokens": self.total_output_tokens,
-            "total_cost": round(self.total_cost, 6),
-        }
-        (self.dir / "meta.json").write_text(json.dumps(meta, indent=2))
-
-    @staticmethod
-    def _summarise_content(blocks: list[ContentBlock], max_len: int = 200) -> str:
-        """Create a short summary of content blocks for the JSONL log.
-
-        For text: first 200 chars.
-        For tool_use: "tool: <name>(<args summary>)"
-        For tool_result: "result: <first 100 chars>"
+        Called by the engine (via the app) at the end of each user turn.
+        Creates the sessions directory and file on first write.
         """
-        parts = []
-        for block in blocks:
-            if isinstance(block, TextBlock):
-                text = block.text[:max_len]
-                if len(block.text) > max_len:
-                    text = text[: max_len - 3] + "..."
-                parts.append(text)
-            elif isinstance(block, ToolUseBlock):
-                args_str = json.dumps(block.input)[:80]
-                parts.append(f"tool: {block.name}({args_str})")
-            elif isinstance(block, ToolResultBlock):
-                status = "error" if block.is_error else "ok"
-                parts.append(f"result[{status}]: {block.content[:100]}")
-        return " | ".join(parts)[:max_len]
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        cost = calculate_cost(self.model_info, turn_log.input_tokens, turn_log.output_tokens)
+
+        entry = {
+            "id": str(ULID()),
+            "when": turn_log.when,
+            "user": turn_log.user,
+            "assistant": turn_log.assistant_text or None,
+            "metadata": {
+                "model": turn_log.model or self.model_id,
+                "input_tokens": turn_log.input_tokens,
+                "output_tokens": turn_log.output_tokens,
+                "cost": round(cost, 6),
+                "interrupted": turn_log.interrupted,
+            },
+        }
+
+        # Only include tools if there were any
+        if turn_log.tools:
+            entry["tools"] = turn_log.tools
+
+        # Remove None assistant (omit rather than null)
+        if entry["assistant"] is None:
+            del entry["assistant"]
+
+        with self.log_path.open("a") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def _serialize_blocks(blocks: list[ContentBlock]) -> list[dict]:
-    """Serialize content blocks to JSON-compatible dicts with type discriminators.
+def summarise_tool_output(name: str, tool_input: dict, output: str, is_error: bool) -> str:
+    """Produce a short summary of tool output for the session log.
 
-    Format:
-        TextBlock       → {"type": "text", "text": "..."}
-        ToolUseBlock    → {"type": "tool_use", "id": "...", "name": "...", "input": {...}}
-        ToolResultBlock → {"type": "tool_result", "id": "...", "content": "...", "is_error": bool}
+    Captures the *result* in a compact form — the full input is stored separately.
+    Called before truncation so we have access to the complete output.
     """
-    result = []
-    for block in blocks:
-        if isinstance(block, TextBlock):
-            result.append({"type": "text", "text": block.text})
-        elif isinstance(block, ToolUseBlock):
-            result.append(
-                {
-                    "type": "tool_use",
-                    "id": block.tool_use_id,
-                    "name": block.name,
-                    "input": block.input,
-                }
-            )
-        elif isinstance(block, ToolResultBlock):
-            result.append(
-                {
-                    "type": "tool_result",
-                    "id": block.tool_use_id,
-                    "content": block.content,
-                    "is_error": block.is_error,
-                }
-            )
-    return result
+    if is_error:
+        # First line of error, capped
+        return output.split("\n")[0][:100]
+
+    match name:
+        case "read_file":
+            lines = output.count("\n")
+            return f"{lines} lines"
+        case "write_file" | "edit_file":
+            # These already return concise messages like "Written: path (42 lines)"
+            return output[:100]
+        case "list_files":
+            file_count = output.strip().count("\n") + 1 if output.strip() else 0
+            return f"{file_count} files"
+        case "search_files":
+            match_count = output.count("\n")
+            return f"{match_count} matches"
+        case "shell":
+            # Parse exit code from our format "[exit: N]"
+            lines = output.strip().split("\n")
+            exit_line = next((line for line in lines if "[exit:" in line), "[exit: ?]")
+            output_lines = max(0, len(lines) - 2)
+            return f"{exit_line.strip()}, {output_lines} lines"
+        case _:
+            return f"{len(output)} chars"

@@ -25,9 +25,13 @@ def model_info():
 
 @pytest.fixture
 def session(tmp_path, model_info):
-    """Create a session with tmp_path as its directory."""
-    s = Session(model_id="test-model", model_info=model_info)
-    s._dir = tmp_path / "test-session"
+    """Create a session that writes to tmp_path."""
+    from unittest.mock import patch
+
+    with patch("archie.session.SESSIONS_DIR", tmp_path):
+        s = Session(model_id="test-model", model_info=model_info, project_name="test")
+    # Ensure SESSIONS_DIR is patched for flush_turn calls during tests
+    s._log_path = tmp_path / f"{s.session_id}.jsonl"
     return s
 
 

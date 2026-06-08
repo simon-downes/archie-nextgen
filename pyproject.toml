@@ -10,6 +10,7 @@ requires-python = ">=3.13"
 dependencies = [
     "boto3>=1,<2",
     "click>=8,<9",
+    "python-ulid>=3.1.0",
     "pyyaml>=6,<7",
     "textual>=8,<9",
 ]

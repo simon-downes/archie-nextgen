@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 from archie.llm import BedrockClient, Done, ToolUseEvent, Usage
 from archie.llm import TextDelta as LlmTextDelta
-from archie.session import Session
+from archie.session import Session, TurnLog, summarise_tool_output
 from archie.tools import ToolRegistry, truncate_result
 from archie.types import (
     EngineEvent,
@@ -86,6 +86,10 @@ class Engine:
         self._last_call_key: tuple[str, str] | None = None
         self._consecutive_count: int = 0
 
+        # --- Turn log accumulation ---
+        # Built up during run(), accessible from the app for flushing on interrupt.
+        self.current_turn_log: TurnLog | None = None
+
     def run(self, user_message: str) -> Generator[EngineEvent]:
         """Process a user message through the full LLM + tool loop.
 
@@ -102,6 +106,15 @@ class Engine:
         """
         # Record user message
         self.session.add_turn("user", user_message)
+
+        # Initialize turn log for persistence (accumulated during the loop)
+        from datetime import UTC, datetime
+
+        self.current_turn_log = TurnLog(
+            when=datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+            user=user_message,
+            model=self.session.model_id,
+        )
 
         # Token accumulators — summed across multiple LLM calls in this turn
         total_input_tokens = 0
@@ -146,6 +159,10 @@ class Engine:
                 assistant_content.append(TextBlock(text="".join(text_chunks)))
             assistant_content.extend(tool_use_blocks)
 
+            # Accumulate assistant text for the turn log
+            if text_chunks:
+                self.current_turn_log.assistant_text += "".join(text_chunks)
+
             # Record the assistant turn
             if assistant_content:
                 self.session.add_turn(
@@ -157,6 +174,12 @@ class Engine:
 
             # --- If no tool use, we're done ---
             if stop_reason != "tool_use" or not tool_use_blocks:
+                # Finalize and flush the turn log
+                self.current_turn_log.input_tokens = total_input_tokens
+                self.current_turn_log.output_tokens = total_output_tokens
+                self.session.flush_turn(self.current_turn_log)
+                self.current_turn_log = None
+
                 yield TurnComplete(
                     input_tokens=total_input_tokens,
                     output_tokens=total_output_tokens,
@@ -175,6 +198,23 @@ class Engine:
                 )
 
                 result_content, is_error = self._execute_tool(tool_block.name, tool_block.input)
+
+                # Summarise tool output for the log BEFORE truncation
+                summary = summarise_tool_output(
+                    tool_block.name, tool_block.input, result_content, is_error
+                )
+
+                # Accumulate tool entry for the turn log
+                tool_entry: dict = {
+                    "id": tool_block.tool_use_id,
+                    "name": tool_block.name,
+                    "input": tool_block.input,
+                    "success": not is_error,
+                    "summary": summary,
+                }
+                if is_error:
+                    tool_entry["error"] = result_content.split("\n")[0][:200]
+                self.current_turn_log.tools.append(tool_entry)
 
                 # Truncate to prevent context bloat
                 result_content = truncate_result(result_content)
@@ -201,6 +241,11 @@ class Engine:
 
         # Safety: if we exhausted MAX_ITERATIONS, force-complete the turn
         log.warning("Engine hit iteration cap (%d). Forcing turn completion.", max_iterations)
+        self.current_turn_log.input_tokens = total_input_tokens
+        self.current_turn_log.output_tokens = total_output_tokens
+        self.session.flush_turn(self.current_turn_log)
+        self.current_turn_log = None
+
         yield TurnComplete(
             input_tokens=total_input_tokens,
             output_tokens=total_output_tokens,

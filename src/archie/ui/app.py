@@ -128,7 +128,11 @@ class ArchieApp(App):
         self.config = load_config()
         self.model_info = get_model_info(self.config.model)
         self.llm = BedrockClient(model_id=self.config.model, region=self.config.region)
-        self.session = Session(model_id=self.config.model, model_info=self.model_info)
+        self.session = Session(
+            model_id=self.config.model,
+            model_info=self.model_info,
+            project_name=self.project_dir.name,
+        )
 
         # Create tool registry with configured path access and sandbox.
         # detect_project_dir finds the project root (e.g. ~/dev/myproject)
@@ -320,6 +324,17 @@ class ArchieApp(App):
         self._remove_throbber()
         self._finalise_streaming()
 
+        # Flush interrupted turns — the engine was abandoned mid-loop so it
+        # couldn't flush itself. We grab whatever it accumulated and write it.
+        if event.interrupted and self.engine.current_turn_log is not None:
+            self.engine.current_turn_log.interrupted = True
+            self.engine.current_turn_log.assistant_text = (
+                self.engine.current_turn_log.assistant_text
+                or "Response was interrupted by the user"
+            )
+            self.session.flush_turn(self.engine.current_turn_log)
+            self.engine.current_turn_log = None
+
         # Update status bar with token counts from the full engine turn
         self._update_status(event.input_tokens, event.output_tokens)
 
@@ -429,7 +444,11 @@ class ArchieApp(App):
         self.sandbox.destroy()
 
         # Create new session
-        self.session = Session(model_id=self.config.model, model_info=self.model_info)
+        self.session = Session(
+            model_id=self.config.model,
+            model_info=self.model_info,
+            project_name=self.project_dir.name,
+        )
 
         # Create new sandbox tied to the new session
         self.sandbox = Sandbox(
