@@ -229,7 +229,7 @@ Rebuilds `index.yaml` by scanning all brain .md files and extracting frontmatter
 
 1. **BedrockClient non-streaming**: Add a simple `invoke()` method to BedrockClient that uses `converse` (not `converse_stream`). Returns the full response text. ~10 lines. Extraction doesn't need streaming.
 
-2. **Startup extraction latency**: Cap at 3 sessions or 30 turns total on startup. If there's more unextracted history, process the rest in the background during the session. Show a brief "Updating memory..." status message. Startup should be <5 seconds in the common case (one session with a few turns).
+2. **Startup extraction**: Process ALL unextracted turns before the TUI starts. Display progress on the console (before Textual takes over): "Updating memory... 3 sessions, 12 turns to process" → "Processing session 1/3..." → "Done." User sees what's happening and waits. If it becomes slow later, we optimise then.
 
 3. **During-session extraction concurrency**: Fire-and-forget in a separate Worker thread. The extraction reads the session JSONL (already written) and writes to a separate memory JSONL — no shared state with the engine. `.last_extracted` is written only by the extraction thread (no contention). If two extractions overlap somehow, the watermark prevents re-processing.
 
