@@ -176,6 +176,7 @@ class ArchieApp(App):
         self._streaming: StreamingMessage | None = None
         self._stream_worker: Worker | None = None
         self._stream_text: str = ""
+        self._turn_count: int = 0  # Counts turns since last memory extraction
 
         # Thinking indicator — mounted in conversation while waiting for engine
         self._throbber: Throbber | None = None
@@ -348,6 +349,29 @@ class ArchieApp(App):
         inp.disabled = False
         inp.focus()
 
+        # Trigger memory extraction every N turns (fire-and-forget in background)
+        self._turn_count += 1
+        if self._turn_count >= self.config.memory.extraction_interval:
+            self._turn_count = 0
+            self.run_worker(self._run_memory_extraction, thread=True)
+
+    def _run_memory_extraction(self) -> None:
+        """Background thread: extract memory fragments from recent turns."""
+        try:
+            from archie.memory import MemoryExtractor
+
+            memory_dir = self.config.brain_dir / "_memory"
+            if not memory_dir.exists():
+                return
+            extractor = MemoryExtractor(
+                brain_dir=self.config.brain_dir,
+                extraction_model=self.config.memory.extraction_model,
+                region=self.config.region,
+            )
+            extractor.extract_all()
+        except Exception:  # noqa: BLE001 — background extraction failure is non-fatal
+            log.debug("Background memory extraction failed", exc_info=True)
+
     # --- UI helpers ---
 
     def _finalise_streaming(self) -> None:
@@ -420,11 +444,26 @@ class ArchieApp(App):
             self.sandbox.cancel()
 
     async def action_quit(self) -> None:
-        """Ctrl+Q pressed — destroy sandbox container, then exit.
+        """Ctrl+Q pressed — extract memory, destroy sandbox, then exit.
 
-        Ensures no orphaned containers are left running after archie exits.
-        The atexit handler is a backup, but explicit cleanup here is preferred.
+        Extracts any remaining unprocessed turns before quitting so memory
+        is up to date for the next session. Best-effort with 5s timeout.
         """
+        # Best-effort memory extraction on quit
+        try:
+            from archie.memory import MemoryExtractor
+
+            memory_dir = self.config.brain_dir / "_memory"
+            if memory_dir.exists():
+                extractor = MemoryExtractor(
+                    brain_dir=self.config.brain_dir,
+                    extraction_model=self.config.memory.extraction_model,
+                    region=self.config.region,
+                )
+                extractor.extract_all()
+        except Exception:  # noqa: BLE001 — don't block quit on extraction failure
+            pass
+
         self.sandbox.destroy()
         await super().action_quit()
 

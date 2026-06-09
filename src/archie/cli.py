@@ -87,6 +87,24 @@ def chat():
             "  Run 'archie init' to create the brain structure.\n",
             err=True,
         )
+    else:
+        # Memory extraction: process any unextracted session turns before starting.
+        # This ensures memory is up to date for the new session.
+        memory_dir = config.brain_dir / "_memory"
+        if memory_dir.exists():
+            from archie.memory import MemoryExtractor
+
+            extractor = MemoryExtractor(
+                brain_dir=config.brain_dir,
+                extraction_model=config.memory.extraction_model,
+                region=config.region,
+            )
+            try:
+                count = extractor.extract_all()
+                if count > 0:
+                    click.echo(f"  Memory updated: {count} fragments extracted.\n")
+            except Exception as e:  # noqa: BLE001 — extraction failure shouldn't block chat
+                click.echo(f"⚠ Memory extraction failed: {e}\n", err=True)
 
     from archie.ui.app import ArchieApp
 
