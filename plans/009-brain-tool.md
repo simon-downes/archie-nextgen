@@ -1,6 +1,8 @@
-# Plan 009: Brain Tool
+# Plan 009: Brain Tool (DEPRECATED)
 
-## Objective
+> **Superseded by Plan 010** — the brain and memory concerns have been separated into distinct systems. See `plans/010-memory-and-brain.md`.
+
+## Original Objective
 
 Add a `brain` tool that provides frontmatter-aware knowledge management over `~/.archie/brain/`. Five operations: recall (memory retrieval), remember (memory creation), read (any item), write (any item), search (scored across everything).
 
@@ -22,13 +24,14 @@ Every read/write/search operation understands YAML frontmatter. Reading returns 
 
 ### Search scoring
 
-Matches are scored by location:
-- **name/title**: weight 10 (strongest signal)
-- **tags**: weight 8
-- **summary**: weight 5
-- **body content**: weight 1
+Matches are scored additively per term (matching the proven agent-kit approach):
+- **name/slug match**: +3 per term
+- **tag match**: +2 per term
+- **summary match**: +1 per term
+- **body content match** (via rg): +1 per term
+- **Recency bonus** (memories only): <7d +2, <30d +1, >90d -1
 
-Multiple matches in one file accumulate. Results returned sorted by score, top 20.
+Results sorted by (-matches, -score), top 20.
 
 ### Memory is special
 
@@ -226,7 +229,7 @@ Found 5 results for "terraform module":
 4. **Path validation**: Simple containment check — resolve the path, verify it's under `brain_dir`. Reject paths containing `..`. No access to `validate_path()` (different root). Block writes to: `.git/`, `brain.db`, `.brain.lock`, `_archie/logs/` (read-only).
 
 5. **Edge cases**:
-   - `brain_dir` doesn't exist → `archie init` creates it. Tool returns "brain not initialized, run archie init" if missing.
+   - `brain_dir` doesn't exist → startup check in `archie chat` (like Docker check). Error tells user to run `archie init`. Tool never encounters a missing brain.
    - `.brain.lock` → ignore (it's for the external `ak` tool, not for us)
    - `brain.db` → don't use (legacy, we maintain our own index.yaml)
    - `.git` → don't auto-commit (the `commit` operation handles this explicitly)
@@ -344,48 +347,51 @@ Multi-word queries are split into terms with stopwords removed. Each term is sea
 
 ### Brain directory config
 
-Brain root defaults to `~/.archie/brain/`. Added to config as `brain_dir`.
+Brain root defaults to `~/.archie/new-brain/` (avoids conflicting with existing brain during development). Configurable via `brain_dir` in `nextgen.yaml`.
 
 ## Milestones
 
-### Milestone 1: BrainIndex + index management
+### Milestone 1: Config + CLI commands
+
+- Add `brain_dir` to config (default `~/.archie/new-brain`)
+- Add `archie init` command — creates brain directory structure + `git init`
+  - Creates: `_archie/memory/`, `projects/`, `knowledge/`, `people/`, empty `index.yaml`
+  - No-op for existing subdirs (creates any that are missing, doesn't touch existing files)
+- Add `archie brain reindex` command — rebuilds `index.yaml` from filesystem
+- Add brain presence check at startup (non-fatal warning like Docker, or fatal if brain is required)
+- Tests: init creates structure, init is idempotent, reindex builds correct index
+
+### Milestone 2: BrainIndex + index management
 
 - Create `src/archie/brain.py` with `BrainIndex` class
 - Implement frontmatter parsing (YAML extraction)
 - Implement `build_index()` — scan all brain .md files, extract frontmatter, write `index.yaml`
-- Build index on first search if `index.yaml` missing
-- Update index on write/remember (add/update the entry)
-- Two-phase search: index first, then rg fallback for content matches
+  - Index structure: `{type: {slug: {name, path, summary, tags}}}` where type = parent directory name (projects, knowledge, people, memory), slug = filename stem
+- Build index on first search if `index.yaml` is empty/outdated
+- Update index entry on write/remember
+- Two-phase search: index first, then rg fallback for content matches (rg not found → skip phase 2, log warning)
 - Stopword removal for multi-word queries
 - Tests: parse frontmatter, build index, update index on write, search scoring
 
-### Milestone 2: read + write + search operations
+### Milestone 3: read + write + search operations
 
 - Implement `read()` — returns structured frontmatter + body
-- Implement `write()` — generates frontmatter, creates dirs, writes file, updates index
+- Implement `write()` — generates/merges frontmatter, creates dirs, writes file, updates index
 - Implement `search()` — two-phase search (index + rg), scored, scoped
 - Tests: read brain files, write with frontmatter merge, search with scoring
 
-### Milestone 3: recall + remember operations
+### Milestone 4: recall + remember operations
 
 - Implement `recall()` — memory-scoped search with recency weighting (hard-scoped to `_archie/memory/`)
 - Implement `remember()` — auto-generates filename, writes to `_archie/memory/`, updates index
-- Memory filename convention: `YYYY-MM-DD-{project}-{hash}.md`
+- Memory filename convention: `YYYY-MM-DD-{project}-{hash}.md` (project defaults to "general" if empty)
 - Tests: recall with recency bonus, remember file creation, index update
 
-### Milestone 4: commit operation
+### Milestone 5: commit operation + tool registration
 
-- Implement `commit()` — git add + git commit in the brain repo
-- Handle: specific paths or all changes, commit message required
-- Error handling: nothing to commit, not a git repo
-- Tests: commit stages and commits, handles empty changeset
-
-### Milestone 5: CLI commands + tool registration
-
-- Add `archie init` command — creates brain directory structure + git init
-- Add `archie brain reindex` command — rebuilds index.yaml from filesystem
-- Add `brain_dir` to config (default `~/.archie/new-brain`)
+- Implement `commit()` — `git add` specified paths (or `git add -A` for all) + `git commit -m`
+  - Note: `git add -A` stages everything — intentional for batch operations
 - Create `src/archie/tools/brain.py` (tool spec, handler, operation dispatch)
-- Register in `create_default_registry()` (add brain_dir + project_name params)
-- Tests: init creates structure, reindex builds correct index
+- Register in `create_default_registry()` (add `brain_dir` and `project_name` params — 2 call sites in app.py)
+- Tests: commit stages and commits, handles empty changeset, tool handler routing
 - Run review workflow
