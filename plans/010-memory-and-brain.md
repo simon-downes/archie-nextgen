@@ -73,14 +73,39 @@ Every N turns (default 5), a background extraction process:
 The extraction call includes the last 3 memory entries for continuity — so the model knows what's already been remembered and can avoid duplication or fragmentation (e.g. updating an existing topic rather than creating a new one).
 
 ```
-Here are the most recent memory entries:
+Here are the most recent memory entries for context:
 {last_3_fragments}
 
-Extract durable knowledge fragments from these new conversation turns:
+Extract knowledge fragments from these conversation turns:
 {turns_to_process}
 
-For each fragment, provide: type (decision/learning/preference/state/context), topic (short label — reuse existing topics where the subject is the same), content (1-2 sentences), and tags.
-Only extract information worth remembering across sessions. Skip ephemeral details.
+## What to capture
+
+Capture LIBERALLY. It is better to over-capture than to miss something. Include:
+- Decisions made (explicit or implicit) and the reasoning behind them
+- Discussion about tradeoffs, even if no conclusion was reached
+- Things that were tried and didn't work (and why)
+- User preferences or working style observations
+- Technical insights, patterns, or approaches discovered
+- Project progress and state changes
+- Questions raised that remain open
+- Context that would help a future session understand what happened
+
+## What to skip
+
+Only skip turns that are purely mechanical with zero informational value:
+- Running a linter/formatter with no discussion
+- Fixing a single typo with no context
+- Tool calls that just read files without any resulting insight
+
+When in doubt, INCLUDE IT. A fragment that turns out to be low-value costs nothing. A missing fragment that was needed is unrecoverable.
+
+## Output format
+
+For each fragment provide: type (decision/learning/preference/state/context), topic (short label — reuse existing topics where the subject is the same), content (1-3 sentences capturing the key information), and tags.
+
+Return an empty array ONLY if the turns are entirely mechanical (e.g. only tool calls with no discussion).
+
 Return as a JSON array.
 ```
 
