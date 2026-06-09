@@ -258,6 +258,37 @@ class BedrockClient:
             elif "messageStop" in event:
                 yield Done(stop_reason=event["messageStop"].get("stopReason", "end_turn"))
 
+    def invoke(self, messages: list[dict], system: str) -> str:
+        """Non-streaming call using boto3 converse(). Returns the response text.
+
+        Used for lightweight extraction tasks (e.g. memory extraction via Haiku)
+        where streaming is unnecessary overhead.
+
+        Args:
+            messages: Bedrock-format message dicts (role + content blocks).
+            system: System prompt text.
+
+        Returns:
+            The model's text response.
+        """
+        params = {
+            "modelId": self.model_id,
+            "messages": messages,
+            "system": [{"text": system}],
+        }
+        for attempt in range(3):
+            try:
+                response = self.client.converse(**params)
+                break
+            except self.client.exceptions.ThrottlingException:
+                if attempt == 2:
+                    raise
+                time.sleep(2**attempt)
+
+        # Extract text from the response content blocks
+        output = response.get("output", {}).get("message", {}).get("content", [])
+        return "".join(block.get("text", "") for block in output)
+
     def _call_with_retry(self, params: dict, max_retries: int = 3) -> dict:
         """Call converse_stream with retry on throttling.
 

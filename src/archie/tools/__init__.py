@@ -193,4 +193,10 @@ def create_default_registry(
 
         registry.register(make_brain_spec(brain_dir))
 
+    # Recall tool: search memory fragments. Requires brain_dir with _memory/.
+    if brain_dir is not None and (brain_dir / "_memory").exists():
+        from archie.tools.recall import make_recall_spec
+
+        registry.register(make_recall_spec(brain_dir))
+
     return registry
