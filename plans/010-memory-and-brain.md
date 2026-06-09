@@ -51,10 +51,10 @@ Every N turns (default 5), a background extraction process:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| id | string | ULID (time-sortable, globally unique) |
+| id | string | ULID (encodes timestamp + random — provides time-ordering without a separate ts field) |
 | session_id | string | Which session produced this fragment |
 | type | string | decision, learning, preference, state, context |
-| topic | string | Short topic label for retrieval |
+| topic | string | Short topic label for retrieval (reuse across related fragments) |
 | content | string | The actual knowledge fragment |
 | tags | list[str] | Tags for filtering/retrieval |
 
@@ -70,18 +70,27 @@ Every N turns (default 5), a background extraction process:
 
 ### Extraction prompt (sent to Haiku)
 
+The extraction call includes the last 3 memory entries for continuity — so the model knows what's already been remembered and can avoid duplication or fragmentation (e.g. updating an existing topic rather than creating a new one).
+
 ```
-Extract durable knowledge fragments from these conversation turns.
-For each fragment, provide: type (decision/learning/preference/state/context), topic (short label), content (1-2 sentences), and tags.
+Here are the most recent memory entries:
+{last_3_fragments}
+
+Extract durable knowledge fragments from these new conversation turns:
+{turns_to_process}
+
+For each fragment, provide: type (decision/learning/preference/state/context), topic (short label — reuse existing topics where the subject is the same), content (1-2 sentences), and tags.
 Only extract information worth remembering across sessions. Skip ephemeral details.
 Return as a JSON array.
 ```
 
 ### Extraction trigger
 
-- **Automatic**: every 5 turns during a session (configurable)
-- **Manual**: `archie memory extract` CLI command (processes all unextracted turns)
-- **End of session**: on `action_quit` (extract any remaining turns)
+- **On startup**: before the session begins, check watermarks and extract any unextracted turns from recent sessions. Ensures memory is up to date before the model starts working.
+- **During session**: every N turns (default 5), extract the latest turns so memory stays current for long sessions.
+- **On session quit**: extract any remaining turns.
+
+No manual CLI trigger — extraction is always automatic.
 
 ### Watermark tracking
 
@@ -173,10 +182,9 @@ A curated knowledge base for reference material that doesn't come from conversat
 Every `brain read` and `recall` query records an access:
 ```sql
 CREATE TABLE refs (path TEXT NOT NULL, ts INTEGER NOT NULL);
-CREATE TABLE metrics (event TEXT, data TEXT, ts INTEGER);
 ```
 
-Enables: "what's frequently accessed?", "what's stale?", future analytics.
+Enables: "what's frequently accessed?", "what's stale?"
 
 ### Search scoring (two-phase)
 
@@ -211,21 +219,11 @@ Idempotent — creates missing subdirs, doesn't touch existing files.
 
 Rebuilds `index.yaml` by scanning all brain .md files and extracting frontmatter.
 
-### `archie memory extract`
-
-Manually trigger memory extraction for all sessions with unextracted turns.
-
 ## Observability
 
-### Tracked automatically:
-- **Ref counts** (SQLite) — every brain read / recall query
-- **Extraction log** (appended to metrics table) — when, fragments extracted, cost
-
-### Available for future analysis:
-- Which brain items are hot/stale?
-- How many fragments per session?
-- Extraction cost over time
-- Recall hit rate (returned results vs empty)
+- **Ref counts** (SQLite `refs` table) — every brain read / recall query, enables "what's hot/stale?"
+- Fragment count per session visible in watermark file
+- Extraction runs logged at INFO level
 
 ## Config
 
@@ -260,12 +258,13 @@ memory:
 
 - Create `src/archie/memory.py` — MemoryExtractor class
 - Haiku client for extraction (reuse BedrockClient with different model)
-- Extraction prompt + response parsing (JSON array of fragments)
+- Extraction prompt with last 3 fragments as context (topic continuity)
+- Response parsing (JSON array of fragments)
 - Watermark tracking (.last_extracted)
 - Write fragments to daily JSONL
-- Trigger: called from engine at turn intervals + on session quit
-- `archie memory extract` CLI
-- Tests: extraction from mock turns, watermark management, JSONL writing
+- Run on startup: process all unextracted turns before session starts
+- Trigger during session: every N turns + on session quit
+- Tests: extraction from mock turns, watermark management, JSONL writing, continuity context
 
 ### Milestone 4: Recall tool
 
