@@ -225,6 +225,27 @@ Rebuilds `index.yaml` by scanning all brain .md files and extracting frontmatter
 - Fragment count per session visible in watermark file
 - Extraction runs logged at INFO level
 
+## Review Resolutions
+
+1. **BedrockClient non-streaming**: Add a simple `invoke()` method to BedrockClient that uses `converse` (not `converse_stream`). Returns the full response text. ~10 lines. Extraction doesn't need streaming.
+
+2. **Startup extraction latency**: Cap at 3 sessions or 30 turns total on startup. If there's more unextracted history, process the rest in the background during the session. Show a brief "Updating memory..." status message. Startup should be <5 seconds in the common case (one session with a few turns).
+
+3. **During-session extraction concurrency**: Fire-and-forget in a separate Worker thread. The extraction reads the session JSONL (already written) and writes to a separate memory JSONL — no shared state with the engine. `.last_extracted` is written only by the extraction thread (no contention). If two extractions overlap somehow, the watermark prevents re-processing.
+
+4. **Recall search strategy**: Linear scan with date-range pre-filtering. The filename contains the date, so `since` filter skips entire files. Within a file, it's line-by-line scan. For 6 months of daily use (~180 files, ~1000 fragments per project), a full scan is <100ms (just JSON parsing + substring match). No index needed until we have 10K+ fragments.
+
+5. **Watermark fragility**: Track by ULID of last extracted turn (from the session JSONL's turn `id` field), not by line number. If the file is externally modified, worst case we re-extract some turns (idempotent — duplicate fragments are low-cost noise, not corruption).
+
+6. **Edge cases**:
+   - First session: no `.last_extracted` → nothing to extract on startup, process first turns after N accumulate
+   - Corrupt JSONL: `json.loads` per line, skip lines that fail with a warning log
+   - Haiku malformed response: try `json.loads`, if it fails log warning and skip this extraction batch (next batch will include these turns)
+
+7. **action_quit extraction**: Best-effort with 5s timeout. If Haiku doesn't respond in time, skip. The turns will be caught on next startup anyway.
+
+8. **Config changes**: Add `brain_dir` and `memory` to Config dataclass with defaults. `load_config()` already handles missing fields gracefully (uses defaults for anything not in the YAML file).
+
 ## Config
 
 ```yaml
