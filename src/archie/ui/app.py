@@ -154,7 +154,9 @@ class ArchieApp(App):
 
         # Registry includes the shell tool (bound to sandbox) so the model
         # can execute commands inside the container.
-        self.tool_registry = create_default_registry(self.project_dir, allowed, self.sandbox)
+        self.tool_registry = create_default_registry(
+            self.project_dir, allowed, self.sandbox, brain_dir=self.config.brain_dir
+        )
 
         # Create the engine — knows about sandbox so it can cancel running
         # commands when the user presses Esc.
@@ -465,7 +467,9 @@ class ArchieApp(App):
 
         # Recreate registry with the new sandbox (shell tool binds to it)
         allowed = [Path(p) for p in self.config.tools.allowed_directories]
-        self.tool_registry = create_default_registry(self.project_dir, allowed, self.sandbox)
+        self.tool_registry = create_default_registry(
+            self.project_dir, allowed, self.sandbox, brain_dir=self.config.brain_dir
+        )
 
         # Recreate engine with new session, registry, and sandbox
         self.engine = Engine(

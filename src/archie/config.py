@@ -61,6 +61,19 @@ class SandboxConfig:
 
 
 @dataclass(frozen=True)
+class MemoryConfig:
+    """Configuration for the memory extraction system.
+
+    Attributes:
+        extraction_model: Bedrock model ID for memory extraction (cheap model).
+        extraction_interval: Number of turns between extraction runs.
+    """
+
+    extraction_model: str = "eu.anthropic.claude-haiku-3-20250305-v1:0"
+    extraction_interval: int = 5
+
+
+@dataclass(frozen=True)
 class Config:
     """Immutable application configuration.
 
@@ -70,8 +83,10 @@ class Config:
     model: str
     region: str
     project_root: Path = field(default_factory=lambda: Path.home() / "dev")
+    brain_dir: Path = field(default_factory=lambda: Path.home() / ".archie" / "new-brain")
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
 
 
 def load_config() -> Config:
@@ -118,10 +133,24 @@ def load_config() -> Config:
         mounts=tuple(sandbox_raw.get("mounts", [])),
     )
 
+    # Parse brain_dir — expand ~ to user's home directory
+    brain_dir = Path(raw.get("brain_dir", "~/.archie/new-brain")).expanduser()
+
+    # Parse memory config
+    memory_raw = raw.get("memory", {}) or {}
+    memory_config = MemoryConfig(
+        extraction_model=memory_raw.get(
+            "extraction_model", "eu.anthropic.claude-haiku-3-20250305-v1:0"
+        ),
+        extraction_interval=memory_raw.get("extraction_interval", 5),
+    )
+
     return Config(
         model=model,
         region=region,
         project_root=project_root,
+        brain_dir=brain_dir,
         tools=tools_config,
         sandbox=sandbox_config,
+        memory=memory_config,
     )

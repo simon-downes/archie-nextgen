@@ -140,7 +140,10 @@ def tool_error(message: str) -> str:
 
 
 def create_default_registry(
-    cwd: Path, allowed_directories: list[Path], sandbox: "Sandbox | None" = None
+    cwd: Path,
+    allowed_directories: list[Path],
+    sandbox: "Sandbox | None" = None,
+    brain_dir: Path | None = None,
 ) -> ToolRegistry:
     """Create a ToolRegistry with the standard tool set.
 
@@ -152,6 +155,8 @@ def create_default_registry(
         allowed_directories: Additional allowed paths from config.
         sandbox: Optional Sandbox instance. If provided, the shell tool is
             registered (allowing the model to execute commands in the container).
+        brain_dir: Optional brain directory. If provided and exists, the brain
+            tool is registered.
     """
     from archie.tools.code import make_code_spec
     from archie.tools.edit_file import make_edit_file_spec
@@ -180,5 +185,12 @@ def create_default_registry(
         from archie.tools.shell import make_shell_spec
 
         registry.register(make_shell_spec(sandbox))
+
+    # Brain tool: only registered if the brain directory exists.
+    # Requires `archie init` to have been run first.
+    if brain_dir is not None and brain_dir.exists():
+        from archie.tools.brain_tool import make_brain_spec
+
+        registry.register(make_brain_spec(brain_dir))
 
     return registry
