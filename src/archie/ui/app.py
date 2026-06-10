@@ -336,6 +336,13 @@ class ArchieApp(App):
         self._remove_throbber()
         self._finalise_streaming()
 
+        # Warn the user if the engine hit its iteration cap
+        if event.stop_reason == "max_iterations":
+            self._show_error(
+                "Reached tool call limit (50 iterations). "
+                "The response may be incomplete. Try breaking the task into smaller steps."
+            )
+
         # Flush interrupted turns — the engine was abandoned mid-loop so it
         # couldn't flush itself. We grab whatever it accumulated and write it.
         if event.interrupted and self.engine.current_turn_log is not None:
