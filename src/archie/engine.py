@@ -131,7 +131,7 @@ class Engine:
         # Safety cap: prevent infinite tool-use loops (e.g. model alternates
         # between two different tool calls forever). 20 iterations is generous —
         # most real tasks need 1-5 LLM calls per user message.
-        max_iterations = 20
+        max_iterations = 50
 
         for _iteration in range(max_iterations):
             # --- Call the LLM ---
