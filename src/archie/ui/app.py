@@ -23,6 +23,7 @@ from textual.message import Message
 from textual.widgets import Footer, TabbedContent, TabPane
 from textual.worker import Worker, get_current_worker
 
+from archie.artifact_store import ArtifactStore
 from archie.config import Config, load_config
 from archie.engine import Engine
 from archie.llm import BedrockClient
@@ -154,8 +155,13 @@ class ArchieApp(App):
 
         # Registry includes the shell tool (bound to sandbox) so the model
         # can execute commands inside the container.
+        self.artifact_store = ArtifactStore()
         self.tool_registry = create_default_registry(
-            self.project_dir, allowed, self.sandbox, brain_dir=self.config.brain_dir
+            self.project_dir,
+            allowed,
+            self.sandbox,
+            brain_dir=self.config.brain_dir,
+            artifact_store=self.artifact_store,
         )
 
         # Create the engine — knows about sandbox so it can cancel running
@@ -166,6 +172,7 @@ class ArchieApp(App):
             tool_registry=self.tool_registry,
             system_prompt=SYSTEM_PROMPT,
             sandbox=self.sandbox,
+            artifact_store=self.artifact_store,
         )
 
         # Safety net: destroy container on unexpected exit (e.g. crash, SIGTERM).
@@ -506,8 +513,13 @@ class ArchieApp(App):
 
         # Recreate registry with the new sandbox (shell tool binds to it)
         allowed = [Path(p) for p in self.config.tools.allowed_directories]
+        self.artifact_store = ArtifactStore()
         self.tool_registry = create_default_registry(
-            self.project_dir, allowed, self.sandbox, brain_dir=self.config.brain_dir
+            self.project_dir,
+            allowed,
+            self.sandbox,
+            brain_dir=self.config.brain_dir,
+            artifact_store=self.artifact_store,
         )
 
         # Recreate engine with new session, registry, and sandbox
@@ -517,6 +529,7 @@ class ArchieApp(App):
             tool_registry=self.tool_registry,
             system_prompt=SYSTEM_PROMPT,
             sandbox=self.sandbox,
+            artifact_store=self.artifact_store,
         )
 
         conv = self.query_one("#conversation", Conversation)

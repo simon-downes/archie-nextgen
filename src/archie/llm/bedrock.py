@@ -147,6 +147,8 @@ class BedrockClient:
         # boto3 client is created once and reused for all requests.
         # It handles connection pooling and credential refresh internally.
         self.client = boto3.client("bedrock-runtime", region_name=region)
+        # Prompt caching: try once, disable if unsupported
+        self._cache_supported: bool = True
 
     def stream(
         self,
@@ -176,10 +178,14 @@ class BedrockClient:
             bedrock_messages = messages
 
         # Build the request
+        system_blocks = [{"text": system}]
+        if self._cache_supported:
+            system_blocks.append({"cachePoint": {"type": "default"}})
+
         params: dict = {
             "modelId": self.model_id,
             "messages": bedrock_messages,
-            "system": [{"text": system}],
+            "system": system_blocks,
         }
 
         # Add tool configuration if tools are available
@@ -297,6 +303,9 @@ class BedrockClient:
 
         ValidationException (usually "context too large") is NOT retried —
         it's a permanent error that won't resolve by waiting.
+
+        If cachePoint is rejected (unsupported model), retry without it once
+        and disable caching for future calls.
         """
         for attempt in range(max_retries):
             try:
@@ -312,6 +321,15 @@ class BedrockClient:
                     max_retries,
                 )
                 time.sleep(delay)
-            except self.client.exceptions.ValidationException:
+            except self.client.exceptions.ValidationException as e:
+                # If cachePoint caused the error, retry without it
+                if self._cache_supported and "cachePoint" in str(e):
+                    log.info("cachePoint not supported, disabling prompt caching")
+                    self._cache_supported = False
+                    # Strip cachePoint from system blocks and retry
+                    params["system"] = [
+                        b for b in params.get("system", []) if "cachePoint" not in b
+                    ]
+                    return self.client.converse_stream(**params)
                 raise
         raise RuntimeError("Unreachable")

@@ -24,9 +24,10 @@ import logging
 from collections.abc import Generator
 from typing import TYPE_CHECKING
 
+from archie.artifact_store import ArtifactStore
 from archie.llm import BedrockClient, Done, ToolUseEvent, Usage
 from archie.llm import TextDelta as LlmTextDelta
-from archie.session import Session, TurnLog, summarise_tool_output
+from archie.session import Session, Turn, TurnLog, summarise_tool_output
 from archie.tools import ToolRegistry, truncate_result
 from archie.types import (
     EngineEvent,
@@ -71,6 +72,7 @@ class Engine:
         tool_registry: ToolRegistry,
         system_prompt: str,
         sandbox: "Sandbox | None" = None,
+        artifact_store: ArtifactStore | None = None,
     ):
         self.llm = llm_client
         self.session = session
@@ -79,12 +81,18 @@ class Engine:
         # Stored so we can call sandbox.cancel() when the user interrupts (Esc).
         # This kills any in-progress docker exec process.
         self.sandbox = sandbox
+        self.artifact_store = artifact_store or ArtifactStore()
 
         # --- Loop prevention state ---
         # Tracks consecutive identical tool calls: (tool_name, args_hash) → count
         # Resets when a different tool+args combination is called.
         self._last_call_key: tuple[str, str] | None = None
         self._consecutive_count: int = 0
+
+        # --- Eviction state ---
+        # Counts completed user turns (run() calls that finished successfully).
+        # Used by _build_context() to determine which tool results to evict.
+        self._completed_turns: int = 0
 
         # --- Turn log accumulation ---
         # Built up during run(), accessible from the app for flushing on interrupt.
@@ -134,7 +142,7 @@ class Engine:
             turn_output = 0
 
             for event in self.llm.stream(
-                messages=self.session.turns,
+                messages=self._build_context(),
                 system=self.system_prompt,
                 tool_config=self.tools.to_tool_config() or None,
             ):
@@ -179,6 +187,7 @@ class Engine:
                 self.current_turn_log.output_tokens = total_output_tokens
                 self.session.flush_turn(self.current_turn_log)
                 self.current_turn_log = None
+                self._completed_turns += 1
 
                 yield TurnComplete(
                     input_tokens=total_input_tokens,
@@ -203,6 +212,9 @@ class Engine:
                 summary = summarise_tool_output(
                     tool_block.name, tool_block.input, result_content, is_error
                 )
+
+                # Store in artifact store for later retrieval if evicted
+                self.artifact_store.put(tool_block.tool_use_id, result_content, summary)
 
                 # Accumulate tool entry for the turn log
                 tool_entry: dict = {
@@ -245,6 +257,7 @@ class Engine:
         self.current_turn_log.output_tokens = total_output_tokens
         self.session.flush_turn(self.current_turn_log)
         self.current_turn_log = None
+        self._completed_turns += 1
 
         yield TurnComplete(
             input_tokens=total_input_tokens,
@@ -295,3 +308,87 @@ class Engine:
             )
 
         return result, False
+
+    def _build_context(self) -> list[dict]:
+        """Build Bedrock-format messages with old tool results replaced by stubs.
+
+        Keeps full tool results for the last 2 completed user turns plus the
+        current in-progress turn. Everything older gets evicted — tool result
+        content is replaced with a summary stub that includes the tool_use_id
+        so the model can use retrieve_artifact if needed.
+        """
+        # Determine eviction boundary: keep results from turns in the last 2
+        # completed user-message cycles. We find the boundary by counting
+        # user text turns (not tool-result turns) backwards.
+        turns = self.session.turns
+        eviction_boundary = self._find_eviction_boundary(turns)
+
+        messages = []
+        for i, turn in enumerate(turns):
+            content_blocks = []
+            for block in turn.content:
+                match block:
+                    case TextBlock(text=text):
+                        content_blocks.append({"text": text})
+                    case ToolUseBlock(tool_use_id=tid, name=name, input=inp):
+                        content_blocks.append(
+                            {"toolUse": {"toolUseId": tid, "name": name, "input": inp}}
+                        )
+                    case ToolResultBlock(tool_use_id=tid, content=content, is_error=is_error):
+                        if i < eviction_boundary:
+                            # Evict: replace content with stub
+                            stub = self._make_eviction_stub(tid, turns[:i])
+                            content_blocks.append(
+                                {
+                                    "toolResult": {
+                                        "toolUseId": tid,
+                                        "content": [{"text": stub}],
+                                        "status": "error" if is_error else "success",
+                                    }
+                                }
+                            )
+                        else:
+                            content_blocks.append(
+                                {
+                                    "toolResult": {
+                                        "toolUseId": tid,
+                                        "content": [{"text": content}],
+                                        "status": "error" if is_error else "success",
+                                    }
+                                }
+                            )
+            messages.append({"role": turn.role, "content": content_blocks})
+        return messages
+
+    def _find_eviction_boundary(self, turns: list[Turn]) -> int:
+        """Find the turn index before which tool results should be evicted.
+
+        Walks backwards through turns counting user text messages (not tool-result
+        turns). Keeps the last 2 user-message boundaries intact.
+        """
+        user_text_count = 0
+        for i in range(len(turns) - 1, -1, -1):
+            turn = turns[i]
+            if turn.role == "user" and turn.content and isinstance(turn.content[0], TextBlock):
+                user_text_count += 1
+                if user_text_count >= 2:
+                    return i
+        return 0  # Nothing to evict
+
+    def _make_eviction_stub(self, tool_use_id: str, preceding_turns: list[Turn]) -> str:
+        """Build a stub string for an evicted tool result."""
+        # Try to get summary from artifact store
+        artifact = self.artifact_store.get(tool_use_id)
+        summary = artifact["summary"] if artifact else "unknown"
+
+        # Find tool name from preceding assistant turn's ToolUseBlock
+        tool_name = "unknown"
+        for turn in reversed(preceding_turns):
+            if turn.role == "assistant":
+                for block in turn.content:
+                    if isinstance(block, ToolUseBlock) and block.tool_use_id == tool_use_id:
+                        tool_name = block.name
+                        break
+                break
+
+        return f"[evicted: {tool_name} — {summary} | id: {tool_use_id}]"

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from archie.artifact_store import ArtifactStore
     from archie.sandbox import Sandbox
 
 
@@ -144,6 +145,7 @@ def create_default_registry(
     allowed_directories: list[Path],
     sandbox: "Sandbox | None" = None,
     brain_dir: Path | None = None,
+    artifact_store: "ArtifactStore | None" = None,
 ) -> ToolRegistry:
     """Create a ToolRegistry with the standard tool set.
 
@@ -156,6 +158,8 @@ def create_default_registry(
         sandbox: Optional Sandbox instance. If provided, the shell tool is
             registered (allowing the model to execute commands in the container).
         brain_dir: Optional brain directory. If provided and exists, the brain
+            tool is registered.
+        artifact_store: Optional ArtifactStore. If provided, the retrieve_artifact
             tool is registered.
     """
     from archie.tools.code import make_code_spec
@@ -198,5 +202,11 @@ def create_default_registry(
         from archie.tools.recall import make_recall_spec
 
         registry.register(make_recall_spec(brain_dir))
+
+    # Artifact retrieval tool: lets the model re-fetch evicted tool results.
+    if artifact_store is not None:
+        from archie.tools.retrieve_artifact import make_retrieve_artifact_spec
+
+        registry.register(make_retrieve_artifact_spec(artifact_store))
 
     return registry
