@@ -12,7 +12,7 @@ def test_load_config_creates_default(tmp_path, monkeypatch):
     monkeypatch.setattr("archie.config.CONFIG_PATH", tmp_path / "nextgen.yaml")
 
     config = load_config()
-    assert config.model == "eu.anthropic.claude-sonnet-4-6"
+    assert config.model == "eu.anthropic.claude-fable-5"
     assert config.region == "eu-west-1"
     assert (tmp_path / "nextgen.yaml").exists()
 

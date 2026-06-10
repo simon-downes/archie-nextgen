@@ -28,7 +28,7 @@ SESSIONS_DIR = ARCHIE_DIR / "sessions"
 # Written to disk on first run if no config exists.
 # Gives the user a working starting point they can edit.
 DEFAULT_CONFIG = """\
-model: "eu.anthropic.claude-sonnet-4-6"
+model: "eu.anthropic.claude-fable-5"
 region: "eu-west-1"
 project_root: "~/dev"
 """

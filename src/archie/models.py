@@ -36,6 +36,12 @@ class ModelInfo:
 # Registry of known models keyed by their Bedrock inference profile ID.
 # Add new models here as they become available.
 MODELS: dict[str, ModelInfo] = {
+    "eu.anthropic.claude-fable-5": ModelInfo(
+        name="Claude Fable 5",
+        max_context_tokens=1_000_000,
+        input_price_per_m=10.0,
+        output_price_per_m=50.0,
+    ),
     "eu.anthropic.claude-sonnet-4-6": ModelInfo(
         name="Claude Sonnet 4.6",
         max_context_tokens=1_000_000,
