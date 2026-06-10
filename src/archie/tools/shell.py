@@ -31,13 +31,23 @@ def make_shell_spec(sandbox: Sandbox) -> ToolSpec:
     def handler(params: dict) -> str:
         """Execute a shell command in the sandbox and return formatted output.
 
+        If RTK is available in the sandbox, the command is rewritten to its
+        rtk equivalent (e.g. "git status" → "rtk git status") for compact
+        output that saves tokens. Falls back to the original command if
+        rtk isn't installed or doesn't have a filter for this command.
+
         Format: "$ {command}\\n[exit: {code}]\\n{output}"
-        This gives the model clear structure — it can see what ran, whether
-        it succeeded, and what the output was.
         """
         command = params.get("command", "")
         if not command:
             return "Error: No command provided"
+
+        # Try to rewrite through rtk for compact output.
+        # rtk rewrite returns exit 0 or 3 with the rewritten command on stdout.
+        # Exit 1/2 means no rewrite available — use original command.
+        rewrite_output, rewrite_exit = sandbox.exec(f'rtk rewrite "{command}" 2>/dev/null')
+        if rewrite_exit in (0, 3) and rewrite_output.strip():
+            command = rewrite_output.strip()
 
         output, exit_code = sandbox.exec(command)
         return f"$ {command}\n[exit: {exit_code}]\n{output}"

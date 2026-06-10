@@ -24,16 +24,16 @@ class TestShellTool:
 
     def test_formats_output_correctly(self):
         """Output format: $ command\\n[exit: code]\\noutput."""
-        self.sandbox.exec.return_value = ("hello world\n", 0)
+        # First call is rtk rewrite (no rewrite available), second is the actual command
+        self.sandbox.exec.side_effect = [("", 1), ("hello world\n", 0)]
 
         result = self.spec.handler({"command": "echo hello world"})
 
         assert result == "$ echo hello world\n[exit: 0]\nhello world\n"
-        self.sandbox.exec.assert_called_once_with("echo hello world")
 
     def test_shows_nonzero_exit_code(self):
         """Non-zero exit codes are clearly shown."""
-        self.sandbox.exec.return_value = ("bash: nope: command not found\n", 127)
+        self.sandbox.exec.side_effect = [("", 1), ("bash: nope: command not found\n", 127)]
 
         result = self.spec.handler({"command": "nope"})
 
@@ -54,10 +54,19 @@ class TestShellTool:
         assert "Error" in result
         self.sandbox.exec.assert_not_called()
 
-    def test_calls_ensure_running_via_exec(self):
-        """sandbox.exec() internally calls ensure_running — verify exec is called."""
-        self.sandbox.exec.return_value = ("", 0)
+    def test_calls_exec_with_rtk_rewrite(self):
+        """Shell tool calls rtk rewrite first, then executes."""
+        self.sandbox.exec.side_effect = [("", 1), ("", 0)]
 
         self.spec.handler({"command": "ls"})
 
-        self.sandbox.exec.assert_called_once_with("ls")
+        assert self.sandbox.exec.call_count == 2
+
+    def test_uses_rtk_rewrite_when_available(self):
+        """If rtk rewrite succeeds (exit 0/3), use the rewritten command."""
+        self.sandbox.exec.side_effect = [("rtk git status\n", 0), ("M file.py\n", 0)]
+
+        result = self.spec.handler({"command": "git status"})
+
+        assert "$ rtk git status" in result
+        self.sandbox.exec.assert_any_call("rtk git status")
