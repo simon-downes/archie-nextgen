@@ -21,6 +21,7 @@ import hashlib
 import json
 import logging
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -74,6 +75,9 @@ class UsageUpdated:
 
     input_tokens: int
     output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cost: float
 
 
 @dataclass(frozen=True)
@@ -170,9 +174,15 @@ class AgentLoop:
 
         try:
             for _ in range(50):
-                text_chunks, tool_use_blocks, turn_input, turn_output, stop_reason = (
-                    self._do_request()
-                )
+                (
+                    text_chunks,
+                    tool_use_blocks,
+                    turn_input,
+                    turn_output,
+                    turn_cache_read,
+                    turn_cache_write,
+                    stop_reason,
+                ) = self._do_request()
                 total_input += turn_input
                 total_output += turn_output
 
@@ -189,12 +199,17 @@ class AgentLoop:
                         assistant_content,
                         input_tokens=turn_input,
                         output_tokens=turn_output,
+                        cache_read_tokens=turn_cache_read,
+                        cache_write_tokens=turn_cache_write,
                     )
 
                 self._emit(
                     UsageUpdated(
                         input_tokens=self.session.total_input_tokens,
                         output_tokens=self.session.total_output_tokens,
+                        cache_read_tokens=self.session.total_cache_read_tokens,
+                        cache_write_tokens=self.session.total_cache_write_tokens,
+                        cost=self.session.total_cost,
                     )
                 )
 
@@ -228,8 +243,8 @@ class AgentLoop:
             self.session.flush_turn(turn_log)
             self._emit(TurnError(message=str(e)))
 
-    def _do_request(self) -> tuple[list[str], list[ToolUseBlock], int, int, str]:
-        """Stream one LLM call. Returns (text_chunks, tool_blocks, in_tok, out_tok, stop).
+    def _do_request(self) -> tuple[list[str], list[ToolUseBlock], int, int, int, int, str]:
+        """Stream one LLM call. Returns (text, tools, in, out, cache_read, cache_write, stop).
 
         On interrupt mid-stream, commits any partial text to session before re-raising
         so the interrupted response is preserved in history.
@@ -241,6 +256,8 @@ class AgentLoop:
         stop_reason = "end_turn"
         turn_input = 0
         turn_output = 0
+        turn_cache_read = 0
+        turn_cache_write = 0
 
         try:
             for event in self.llm.stream(
@@ -255,9 +272,16 @@ class AgentLoop:
                         self._emit(TextDeltaEvent(text=text))
                     case ToolUseEvent(tool_use_id=tid, name=name, input=inp):
                         tool_use_blocks.append(ToolUseBlock(tool_use_id=tid, name=name, input=inp))
-                    case Usage(input_tokens=it, output_tokens=ot):
+                    case Usage(
+                        input_tokens=it,
+                        output_tokens=ot,
+                        cache_read_input_tokens=cr,
+                        cache_write_input_tokens=cw,
+                    ):
                         turn_input = it
                         turn_output = ot
+                        turn_cache_read = cr
+                        turn_cache_write = cw
                     case Done(stop_reason=sr):
                         stop_reason = sr
         except _InterruptedError:
@@ -266,7 +290,15 @@ class AgentLoop:
                 self.session.add_turn("assistant", [TextBlock(text="".join(text_chunks))])
             raise
 
-        return text_chunks, tool_use_blocks, turn_input, turn_output, stop_reason
+        return (
+            text_chunks,
+            tool_use_blocks,
+            turn_input,
+            turn_output,
+            turn_cache_read,
+            turn_cache_write,
+            stop_reason,
+        )
 
     def _execute_tools(self, tool_blocks: list[ToolUseBlock], turn_log: TurnLog) -> None:
         """Run tool calls, committing each result to session immediately for interrupt safety."""
@@ -332,11 +364,17 @@ class AgentLoop:
         if spec is None:
             return f"Error: Unknown tool '{name}'", True
 
+        log.debug("tool %s input: %s", name, str(args)[:500])
+        t0 = time.time()
         try:
             result = spec.handler(args)
         except Exception as e:
-            log.exception("Tool '%s' raised an exception", name)
+            duration = time.time() - t0
+            log.info("tool %s completed in %.1fs (error: %s)", name, duration, str(e)[:100])
             return f"Error: Tool execution failed: {e}", True
+
+        duration = time.time() - t0
+        log.info("tool %s completed in %.1fs (success)", name, duration)
 
         if self._consecutive_count == 3:
             result += (

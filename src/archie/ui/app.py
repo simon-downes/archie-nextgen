@@ -15,6 +15,8 @@ Threading model:
 import atexit
 import logging
 import os
+import subprocess
+import tempfile
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -76,6 +78,7 @@ class ArchieApp(App):
         Binding("ctrl+q", "quit", "Quit"),
         Binding("escape", "cancel", "Cancel"),
         Binding("ctrl+n", "new_session", "New Session"),
+        Binding("ctrl+g", "editor", "Editor"),
         Binding("ctrl+c", "copy_block", "Copy Block"),
     ]
 
@@ -175,6 +178,8 @@ class ArchieApp(App):
             self._stream_text += event.text
             self._streaming.append(event.text)
             conv.scroll_end(animate=False)
+            # Update streaming output estimate in status bar
+            self.query_one("#status", StatusBar).update_output_estimate(len(self._stream_text))
 
         elif isinstance(event, ToolStarted):
             self._remove_throbber()
@@ -291,6 +296,8 @@ class ArchieApp(App):
         status.model_name = self.model_info.name
         status.turn_input = self.session.total_input_tokens
         status.turn_output = self.session.total_output_tokens
+        status.cache_read = self.session.total_cache_read_tokens
+        status.cache_write = self.session.total_cache_write_tokens
         status.context_pct = self.session.context_pct
         status.cost = self.session.total_cost
         status.warning = self.session.context_warning
@@ -300,9 +307,12 @@ class ArchieApp(App):
         status = self.query_one("#status", StatusBar)
         status.turn_input = event.input_tokens
         status.turn_output = event.output_tokens
-        status.cost = self.session.total_cost
+        status.cache_read = event.cache_read_tokens
+        status.cache_write = event.cache_write_tokens
+        status.cost = event.cost
         status.context_pct = self.session.context_pct
         status.warning = self.session.context_warning
+        status.clear_estimate()
 
     def _run_memory_extraction(self) -> None:
         try:
@@ -335,6 +345,43 @@ class ArchieApp(App):
         if self._turn_active:
             self._agent.interrupt()
             self.sandbox.cancel()
+
+    def action_editor(self) -> None:
+        """Ctrl+G — compose the prompt in $EDITOR for long/multi-line input.
+
+        Seeds a tempfile with current input. Detects save vs quit-without-save via mtime.
+        Saving non-empty content auto-submits; saving empty clears input; quitting leaves it.
+        """
+        if self._turn_active:
+            return
+
+        prompt_input = self.query_one("#input", MessageInput)
+        current_text = prompt_input.text
+        editor = os.environ.get("EDITOR", "vi")
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            f.write(current_text)
+            tmpfile = f.name
+
+        seeded_mtime = Path(tmpfile).stat().st_mtime
+
+        with self.suspend():
+            subprocess.run([editor, tmpfile])
+
+        path = Path(tmpfile)
+        saved = path.stat().st_mtime != seeded_mtime
+        content = path.read_text()
+        path.unlink(missing_ok=True)
+
+        if not saved:
+            return
+
+        text = content.strip()
+        if text:
+            prompt_input.clear()
+            prompt_input.post_message(MessageInput.Submitted(text))
+        else:
+            prompt_input.clear()
 
     async def action_quit(self) -> None:
         # Best-effort memory extraction on quit

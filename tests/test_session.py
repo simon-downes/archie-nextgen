@@ -213,3 +213,43 @@ class TestContextTracking:
         session.add_turn("assistant", "hi", input_tokens=1_000_000, output_tokens=1_000_000)
         # 1M input @ $3/M + 1M output @ $15/M = $18
         assert session.total_cost == 18.0
+
+
+class TestCalculateCost:
+    """Tests for four-rate cost calculation."""
+
+    def test_cache_read_uses_cheaper_rate(self):
+        from archie.models import ModelInfo, calculate_cost
+
+        model = ModelInfo(
+            name="Test",
+            max_context_tokens=100_000,
+            input_price_per_m=3.0,
+            output_price_per_m=15.0,
+            cache_read_price_per_m=0.30,
+            cache_write_price_per_m=3.75,
+        )
+        # 1000 cache_read tokens should cost 10x less than 1000 fresh input tokens
+        fresh_cost = calculate_cost(model, input_tokens=1000, output_tokens=0)
+        cache_cost = calculate_cost(model, input_tokens=0, output_tokens=0, cache_read_tokens=1000)
+        assert cache_cost == pytest.approx(fresh_cost / 10)
+
+    def test_all_four_categories_sum(self):
+        from archie.models import ModelInfo, calculate_cost
+
+        model = ModelInfo(
+            name="Test",
+            max_context_tokens=100_000,
+            input_price_per_m=1.0,
+            output_price_per_m=2.0,
+            cache_read_price_per_m=0.1,
+            cache_write_price_per_m=1.5,
+        )
+        cost = calculate_cost(
+            model,
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+            cache_read_tokens=1_000_000,
+            cache_write_tokens=1_000_000,
+        )
+        assert cost == 1.0 + 2.0 + 0.1 + 1.5

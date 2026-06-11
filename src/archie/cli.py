@@ -6,12 +6,33 @@ registered in pyproject.toml under [project.scripts] so `uv run archie`
 or just `archie` (when installed) invokes `main()`.
 """
 
+import logging
 import os
 import subprocess
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import click
+
+LOG_DIR = Path.home() / ".archie"
+LOG_PATH = LOG_DIR / "nextgen.log"
+
+
+def setup_logging() -> None:
+    """Configure always-on debug logging to a rotating file.
+
+    Called before anything else so even startup failures leave a trace.
+    Output goes to ~/.archie/nextgen.log, never to stdout/stderr (Textual owns the terminal).
+    """
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(
+        LOG_PATH, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+    root.addHandler(handler)
 
 
 def check_docker_available() -> None:
@@ -64,6 +85,8 @@ def chat():
     exists before launching the TUI. This gives clear error messages
     instead of failing mid-session.
     """
+    setup_logging()
+
     from archie.config import load_config
 
     try:
@@ -123,6 +146,8 @@ def build():
     Passes the current user's UID and username as build args so that
     the container user matches the host user (avoids file permission issues).
     """
+    setup_logging()
+
     from archie.config import load_config
 
     config = load_config()

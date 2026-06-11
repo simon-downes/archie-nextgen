@@ -94,6 +94,8 @@ class Session:
     turns: list[Turn] = field(default_factory=list)
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    total_cache_read_tokens: int = 0
+    total_cache_write_tokens: int = 0
 
     _last_input_tokens: int = field(default=0, repr=False)
     _turn_counter: int = field(default=0, repr=False)
@@ -118,7 +120,13 @@ class Session:
     @property
     def total_cost(self) -> float:
         """Total USD spent in this session across all turns."""
-        return calculate_cost(self.model_info, self.total_input_tokens, self.total_output_tokens)
+        return calculate_cost(
+            self.model_info,
+            self.total_input_tokens,
+            self.total_output_tokens,
+            self.total_cache_read_tokens,
+            self.total_cache_write_tokens,
+        )
 
     @property
     def context_pct(self) -> float:
@@ -145,6 +153,8 @@ class Session:
         content: str | list[ContentBlock],
         input_tokens: int = 0,
         output_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
         interrupted: bool = False,
     ) -> Turn:
         """Record a turn in memory (for LLM context building). Does NOT write to disk.
@@ -152,8 +162,10 @@ class Session:
         Args:
             role: "user" or "assistant"
             content: Plain string (wrapped in [TextBlock]) or list of ContentBlocks.
-            input_tokens: Token count from LLM response.
-            output_tokens: Token count from LLM response.
+            input_tokens: Fresh input token count from LLM response.
+            output_tokens: Output token count from LLM response.
+            cache_read_tokens: Cache-read input tokens (cheap).
+            cache_write_tokens: Cache-write input tokens (premium).
             interrupted: Whether generation was cancelled.
         """
         if isinstance(content, str):
@@ -174,6 +186,8 @@ class Session:
         self.turns.append(turn)
         self.total_input_tokens += input_tokens
         self.total_output_tokens += output_tokens
+        self.total_cache_read_tokens += cache_read_tokens
+        self.total_cache_write_tokens += cache_write_tokens
 
         if input_tokens > 0:
             self._last_input_tokens = input_tokens
