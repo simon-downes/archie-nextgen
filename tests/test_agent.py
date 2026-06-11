@@ -241,6 +241,13 @@ class TestInterrupt:
         assert "First done" in result_a.content
         assert "interrupted" in result_b.content
 
+        # Protocol correctness: no consecutive user turns (Bedrock rejects them)
+        roles = [t.role for t in session.turns]
+        for i in range(len(roles) - 1):
+            assert not (roles[i] == "user" and roles[i + 1] == "user"), (
+                f"Consecutive user turns at index {i}: {roles}"
+            )
+
 
 class TestErrorHandling:
     """Error scenarios."""

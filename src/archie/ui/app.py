@@ -47,7 +47,7 @@ from archie.tools import create_default_registry
 from archie.ui.commands import ArchieCommands
 from archie.ui.conversation import Conversation, StreamingMessage
 from archie.ui.input import MessageInput
-from archie.ui.status import StatusBar, _detect_git_branch
+from archie.ui.status import StatusBar, detect_git_branch
 from archie.ui.throbber import Throbber
 
 log = logging.getLogger(__name__)
@@ -92,17 +92,30 @@ class ArchieApp(App):
             region=self.config.region,
             max_output_tokens=self.model_info.max_output_tokens,
         )
-
         self.project_dir = detect_project_dir(Path.cwd(), self.config.project_root)
 
+        self._build_stack()
+
+        # Single atexit handler — always destroys the current sandbox
+        atexit.register(lambda: self.sandbox.destroy())
+
+        # UI state
+        self._streaming: StreamingMessage | None = None
+        self._stream_text: str = ""
+        self._turn_active: bool = False
+        self._turn_count: int = 0
+        self._throbber: Throbber | None = None
+        self._git_branch = detect_git_branch(self.project_dir)
+        # Incremented on new_session — stale events from old agents are dropped
+        self._agent_generation: int = 0
+
+    def _build_stack(self) -> None:
+        """Create the session, sandbox, tools, and agent. Called from __init__ and new_session."""
         self.session = Session(
             model_id=self.config.model,
             model_info=self.model_info,
             project_name=self.project_dir.name,
         )
-
-        allowed = [Path(p) for p in self.config.tools.allowed_directories]
-
         self.sandbox = Sandbox(
             config=self.config.sandbox,
             project_dir=self.project_dir,
@@ -110,7 +123,7 @@ class ArchieApp(App):
             username=os.environ.get("USER", "archie"),
             uid=os.getuid(),
         )
-
+        allowed = [Path(p) for p in self.config.tools.allowed_directories]
         self.artifact_store = ArtifactStore()
         self.tool_registry = create_default_registry(
             self.project_dir,
@@ -119,7 +132,6 @@ class ArchieApp(App):
             brain_dir=self.config.brain_dir,
             artifact_store=self.artifact_store,
         )
-
         self._agent = AgentLoop(
             llm_client=self.llm,
             session=self.session,
@@ -129,18 +141,6 @@ class ArchieApp(App):
             sandbox=self.sandbox,
             artifact_store=self.artifact_store,
         )
-
-        atexit.register(self.sandbox.destroy)
-
-        # UI state
-        self._streaming: StreamingMessage | None = None
-        self._stream_text: str = ""
-        self._turn_active: bool = False
-        self._turn_count: int = 0
-        self._throbber: Throbber | None = None
-        self._git_branch = _detect_git_branch(self.project_dir)
-        # Incremented on new_session — stale events from old agents are dropped
-        self._agent_generation: int = 0
 
     def compose(self) -> ComposeResult:
         with TabbedContent():
@@ -315,6 +315,10 @@ class ArchieApp(App):
         status.clear_estimate()
 
     def _run_memory_extraction(self) -> None:
+        self._extract_memory()
+
+    def _extract_memory(self) -> None:
+        """Best-effort memory extraction. Called on quit and periodically between turns."""
         try:
             from archie.memory import MemoryExtractor
 
@@ -328,7 +332,7 @@ class ArchieApp(App):
             )
             extractor.extract_all()
         except Exception:  # noqa: BLE001
-            log.debug("Background memory extraction failed", exc_info=True)
+            log.debug("Memory extraction failed", exc_info=True)
 
     # --- Actions ---
 
@@ -389,21 +393,7 @@ class ArchieApp(App):
             prompt_input.clear()
 
     async def action_quit(self) -> None:
-        # Best-effort memory extraction on quit
-        try:
-            from archie.memory import MemoryExtractor
-
-            memory_dir = self.config.brain_dir / "_memory"
-            if memory_dir.exists():
-                extractor = MemoryExtractor(
-                    brain_dir=self.config.brain_dir,
-                    extraction_model=self.config.memory.extraction_model,
-                    region=self.config.region,
-                )
-                extractor.extract_all()
-        except Exception:  # noqa: BLE001
-            pass
-
+        self._extract_memory()
         self.sandbox.destroy()
         await super().action_quit()
 
@@ -416,44 +406,9 @@ class ArchieApp(App):
             self._streaming = None
             self._stream_text = ""
 
-        # Bump generation so stale events from the old agent are ignored
         self._agent_generation += 1
         self.sandbox.destroy()
-
-        self.session = Session(
-            model_id=self.config.model,
-            model_info=self.model_info,
-            project_name=self.project_dir.name,
-        )
-
-        self.sandbox = Sandbox(
-            config=self.config.sandbox,
-            project_dir=self.project_dir,
-            session_id=self.session.session_id,
-            username=os.environ.get("USER", "archie"),
-            uid=os.getuid(),
-        )
-        atexit.register(self.sandbox.destroy)
-
-        allowed = [Path(p) for p in self.config.tools.allowed_directories]
-        self.artifact_store = ArtifactStore()
-        self.tool_registry = create_default_registry(
-            self.project_dir,
-            allowed,
-            self.sandbox,
-            brain_dir=self.config.brain_dir,
-            artifact_store=self.artifact_store,
-        )
-
-        self._agent = AgentLoop(
-            llm_client=self.llm,
-            session=self.session,
-            tool_registry=self.tool_registry,
-            system_prompt=SYSTEM_PROMPT,
-            emit=self._on_agent_event,
-            sandbox=self.sandbox,
-            artifact_store=self.artifact_store,
-        )
+        self._build_stack()
 
         conv = self.query_one("#conversation", Conversation)
         conv.remove_children()

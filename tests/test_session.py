@@ -297,22 +297,22 @@ class TestDetectGitBranch:
     """Tests for .git/HEAD branch reading."""
 
     def test_reads_branch_from_head(self, tmp_path):
-        from archie.ui.status import _detect_git_branch
+        from archie.ui.status import detect_git_branch
 
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
         (git_dir / "HEAD").write_text("ref: refs/heads/feat/my-branch\n")
-        assert _detect_git_branch(tmp_path) == "feat/my-branch"
+        assert detect_git_branch(tmp_path) == "feat/my-branch"
 
     def test_detached_head_returns_short_hash(self, tmp_path):
-        from archie.ui.status import _detect_git_branch
+        from archie.ui.status import detect_git_branch
 
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
         (git_dir / "HEAD").write_text("abc123def456\n")
-        assert _detect_git_branch(tmp_path) == "abc123de"
+        assert detect_git_branch(tmp_path) == "abc123de"
 
     def test_no_git_dir_returns_dash(self, tmp_path):
-        from archie.ui.status import _detect_git_branch
+        from archie.ui.status import detect_git_branch
 
-        assert _detect_git_branch(tmp_path) == "—"
+        assert detect_git_branch(tmp_path) == "—"

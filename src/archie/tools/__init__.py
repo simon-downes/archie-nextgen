@@ -43,7 +43,7 @@ class ToolSpec:
 class ToolRegistry:
     """Registry of available tools.
 
-    The Engine uses this to:
+    The AgentLoop uses this to:
     1. Build the toolConfig sent to Bedrock (so the model knows what's available)
     2. Look up handlers when the model calls a tool
     """

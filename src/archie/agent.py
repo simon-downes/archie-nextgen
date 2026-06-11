@@ -116,9 +116,29 @@ class _InterruptedError(Exception):
     """Internal control-flow signal for user abort — never escapes this module."""
 
 
+# --- Constants ---
+
+MAX_TOOL_ITERATIONS = 50
+CONSECUTIVE_WARN = 3
+CONSECUTIVE_BLOCK = 4
+
+
 def _hash_args(args: dict) -> str:
     """Create a stable hash of tool arguments for repetition detection."""
     return hashlib.md5(json.dumps(args, sort_keys=True).encode()).hexdigest()
+
+
+@dataclass
+class RequestResult:
+    """Result of one LLM streaming call."""
+
+    text_chunks: list[str]
+    tool_use_blocks: list[ToolUseBlock]
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    stop_reason: str
 
 
 class AgentLoop:
@@ -175,36 +195,28 @@ class AgentLoop:
         total_cache_write = 0
 
         try:
-            for _ in range(50):
-                (
-                    text_chunks,
-                    tool_use_blocks,
-                    turn_input,
-                    turn_output,
-                    turn_cache_read,
-                    turn_cache_write,
-                    stop_reason,
-                ) = self._do_request()
-                total_input += turn_input
-                total_output += turn_output
-                total_cache_read += turn_cache_read
-                total_cache_write += turn_cache_write
+            for _ in range(MAX_TOOL_ITERATIONS):
+                r = self._do_request()
+                total_input += r.input_tokens
+                total_output += r.output_tokens
+                total_cache_read += r.cache_read_tokens
+                total_cache_write += r.cache_write_tokens
 
                 # Record assistant turn
                 assistant_content: list[TextBlock | ToolUseBlock] = []
-                if text_chunks:
-                    assistant_content.append(TextBlock(text="".join(text_chunks)))
-                    turn_log.assistant_text += "".join(text_chunks)
-                assistant_content.extend(tool_use_blocks)
+                if r.text_chunks:
+                    assistant_content.append(TextBlock(text="".join(r.text_chunks)))
+                    turn_log.assistant_text += "".join(r.text_chunks)
+                assistant_content.extend(r.tool_use_blocks)
 
                 if assistant_content:
                     self.session.add_turn(
                         "assistant",
                         assistant_content,
-                        input_tokens=turn_input,
-                        output_tokens=turn_output,
-                        cache_read_tokens=turn_cache_read,
-                        cache_write_tokens=turn_cache_write,
+                        input_tokens=r.input_tokens,
+                        output_tokens=r.output_tokens,
+                        cache_read_tokens=r.cache_read_tokens,
+                        cache_write_tokens=r.cache_write_tokens,
                     )
 
                 self._emit(
@@ -217,13 +229,13 @@ class AgentLoop:
                     )
                 )
 
-                if stop_reason != "tool_use" or not tool_use_blocks:
+                if r.stop_reason != "tool_use" or not r.tool_use_blocks:
                     break
 
                 # Execute tools (each result committed to session immediately)
-                self._execute_tools(tool_use_blocks, turn_log)
+                self._execute_tools(r.tool_use_blocks, turn_log)
             else:
-                log.warning("Agent hit iteration cap (50)")
+                log.warning("Agent hit iteration cap (%d)", MAX_TOOL_ITERATIONS)
 
             turn_log.input_tokens = total_input
             turn_log.output_tokens = total_output
@@ -231,7 +243,7 @@ class AgentLoop:
             turn_log.cache_write_tokens = total_cache_write
             self.session.flush_turn(turn_log)
             self._completed_turns += 1
-            self._emit(TurnComplete(stop_reason=stop_reason))
+            self._emit(TurnComplete(stop_reason=r.stop_reason))
 
         except _InterruptedError:
             self._finalise_interrupted_turn()
@@ -253,8 +265,8 @@ class AgentLoop:
             self.session.flush_turn(turn_log)
             self._emit(TurnError(message=str(e)))
 
-    def _do_request(self) -> tuple[list[str], list[ToolUseBlock], int, int, int, int, str]:
-        """Stream one LLM call. Returns (text, tools, in, out, cache_read, cache_write, stop).
+    def _do_request(self) -> RequestResult:
+        """Stream one LLM call.
 
         On interrupt mid-stream, commits any partial text to session before re-raising
         so the interrupted response is preserved in history.
@@ -300,14 +312,14 @@ class AgentLoop:
                 self.session.add_turn("assistant", [TextBlock(text="".join(text_chunks))])
             raise
 
-        return (
-            text_chunks,
-            tool_use_blocks,
-            turn_input,
-            turn_output,
-            turn_cache_read,
-            turn_cache_write,
-            stop_reason,
+        return RequestResult(
+            text_chunks=text_chunks,
+            tool_use_blocks=tool_use_blocks,
+            input_tokens=turn_input,
+            output_tokens=turn_output,
+            cache_read_tokens=turn_cache_read,
+            cache_write_tokens=turn_cache_write,
+            stop_reason=stop_reason,
         )
 
     def _execute_tools(self, tool_blocks: list[ToolUseBlock], turn_log: TurnLog) -> None:
@@ -374,7 +386,7 @@ class AgentLoop:
             self._last_call_key = call_key
             self._consecutive_count = 1
 
-        if self._consecutive_count >= 4:
+        if self._consecutive_count >= CONSECUTIVE_BLOCK:
             return (
                 "Error: Blocked — this exact tool call has been made 4 times consecutively. "
                 "Try a different approach.",
@@ -397,7 +409,7 @@ class AgentLoop:
         duration = time.time() - t0
         log.info("tool %s completed in %.1fs (success)", name, duration)
 
-        if self._consecutive_count == 3:
+        if self._consecutive_count == CONSECUTIVE_WARN:
             result += (
                 "\n\n⚠️ Warning: This exact tool call has been made 3 times consecutively. "
                 "Consider a different approach to avoid being blocked."
@@ -405,7 +417,12 @@ class AgentLoop:
         return result, False
 
     def _finalise_interrupted_turn(self) -> None:
-        """Repair history so every toolUse has a matching toolResult."""
+        """Repair history so every toolUse has a matching toolResult.
+
+        When interrupted mid-tool-batch, some results are already committed in a user
+        turn. We must append synthetic results to THAT turn (not create a second one)
+        to avoid consecutive user messages which violate the Bedrock protocol.
+        """
         # Collect all tool_use_ids that already have results
         result_ids = set()
         for turn in self.session.turns:
@@ -421,17 +438,27 @@ class AgentLoop:
                     unpaired.append(block)
 
         if unpaired:
-            self.session.add_turn(
-                "user",
-                [
-                    ToolResultBlock(
-                        tool_use_id=b.tool_use_id,
-                        content="[interrupted by user]",
-                        is_error=True,
-                    )
-                    for b in unpaired
-                ],
-            )
+            synthetic = [
+                ToolResultBlock(
+                    tool_use_id=b.tool_use_id,
+                    content="[interrupted by user]",
+                    is_error=True,
+                )
+                for b in unpaired
+            ]
+            # Find the last user turn with tool results and extend it
+            last_result_turn = None
+            for turn in reversed(self.session.turns):
+                if turn.role == "user" and any(
+                    isinstance(b, ToolResultBlock) for b in turn.content
+                ):
+                    last_result_turn = turn
+                    break
+
+            if last_result_turn is not None:
+                last_result_turn.content = list(last_result_turn.content) + synthetic
+            else:
+                self.session.add_turn("user", synthetic)
 
         # If the turn has only the user's original text message with nothing after it,
         # remove it — re-sending a prompt that got no response would confuse the model.

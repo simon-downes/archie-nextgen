@@ -44,7 +44,7 @@ def make_read_file_spec(
     Uses a closure pattern: the handler captures `cwd` and `allowed_directories`
     at registration time. This avoids needing to pass config through the tool
     dispatch system. The mtime cache also lives here as a closure variable —
-    it's tool-specific state that doesn't belong in the Engine.
+    it's tool-specific state that doesn't belong in the agent loop.
 
     Args:
         cwd: Working directory for resolving relative paths.

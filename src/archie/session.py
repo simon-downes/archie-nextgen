@@ -7,7 +7,7 @@ A Session represents one conversation. It tracks:
 
 Persistence: single JSONL file per session at ~/.archie/sessions/{id}.jsonl
 - One line per user turn (everything from prompt → tools → response)
-- Append-only — each turn is flushed when the engine completes it
+- Append-only — each turn is flushed when the agent loop completes it
 - No header — session metadata derivable from filename and turn data
 
 The session ID format is: YYYY-MM-DD-{project}-{hash}
@@ -65,7 +65,7 @@ class Turn:
 class TurnLog:
     """Accumulated data for one user turn, written to the JSONL log.
 
-    Built up by the engine during its run loop, then passed to session.flush_turn().
+    Built up by the agent loop during run_turn, then passed to session.flush_turn().
     """
 
     when: str
@@ -131,21 +131,20 @@ class Session:
         )
 
     @property
+    def _estimated_next_input(self) -> int:
+        """Rough estimate of the next request's input token count."""
+        return self._last_input_tokens + (self.turns[-1].output_tokens if self.turns else 0)
+
+    @property
     def context_pct(self) -> float:
         """Estimated context window usage for the NEXT request (0-100)."""
-        estimated_next = self._last_input_tokens + (
-            self.turns[-1].output_tokens if self.turns else 0
-        )
-        return (estimated_next / self.model_info.max_context_tokens) * 100
+        return (self._estimated_next_input / self.model_info.max_context_tokens) * 100
 
     @property
     def context_warning(self) -> bool:
         """True if we're approaching the model's context limit."""
-        estimated_next = self._last_input_tokens + (
-            self.turns[-1].output_tokens if self.turns else 0
-        )
         return (
-            estimated_next
+            self._estimated_next_input
             > self.model_info.max_context_tokens * self.model_info.context_warning_threshold
         )
 
@@ -199,7 +198,7 @@ class Session:
     def flush_turn(self, turn_log: TurnLog) -> None:
         """Write a completed turn to the JSONL log file. Append-only.
 
-        Called by the engine (via the app) at the end of each user turn.
+        Called by the agent loop at the end of each user turn.
         Creates the sessions directory and file on first write.
         """
         self.log_path.parent.mkdir(parents=True, exist_ok=True)

@@ -18,7 +18,7 @@ from textual.widgets import Static
 log = logging.getLogger(__name__)
 
 
-def _detect_git_branch(project_dir: Path) -> str:
+def detect_git_branch(project_dir: Path) -> str:
     """Read the current branch from .git/HEAD directly — no subprocess.
 
     Returns the branch name or a short commit hash (detached HEAD), or "—" if

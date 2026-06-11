@@ -1,15 +1,15 @@
 """Animated gradient throbber widget — thinking indicator.
 
 Shows a single-line rainbow gradient bar that scrolls horizontally,
-indicating the engine is working (waiting for LLM response or processing).
+indicating the agent is working (waiting for LLM response or processing).
 
 Inspired by Toad's throbber widget. Uses Textual's Visual protocol for
 efficient rendering — bypasses Rich entirely and builds Strip objects
 directly from colour gradients.
 
 Lifecycle:
-- Mounted in the Conversation when the engine worker starts
-- Removed when the first event arrives from the engine (StreamChunk,
+- Mounted in the Conversation when the agent worker starts
+- Removed when the first event arrives from the agent (TextDeltaEvent,
   ToolStart, or StreamComplete) — any event means work has begun
 - The animation runs at ~15fps via auto_refresh
 """
@@ -95,7 +95,7 @@ def _make_segments(gradient: Gradient, character: str, style: Style, width: int)
 class Throbber(Widget):
     """Single-line animated gradient bar — the "thinking" indicator.
 
-    Mount this in the conversation when waiting for the engine.
+    Mount this in the conversation when waiting for the agent.
     Remove it when the first response event arrives.
     """
 

@@ -158,7 +158,7 @@ class Sandbox:
     def cancel(self) -> None:
         """Kill the active exec process if one is running.
 
-        Called from the UI thread (via Engine) when the user presses Esc.
+        Called from the UI thread (via agent.interrupt()) when the user presses Esc.
         Killing the docker exec process terminates the command inside the
         container. The exec() method will then return with partial output.
         """
