@@ -31,7 +31,7 @@ def make_list_files_spec(cwd: Path, allowed_directories: list[Path]) -> ToolSpec
             return tool_error(str(e))
 
         # Build rg --files command (lists files, respects .gitignore)
-        cmd = ["rg", "--files", "--sort=path"]
+        cmd = ["rg", "--files", "--sort=path", "-g", "!.git/"]
         if glob_filter:
             cmd.extend(["-g", glob_filter])
         cmd.append(str(search_path))
