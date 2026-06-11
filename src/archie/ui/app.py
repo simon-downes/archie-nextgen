@@ -36,7 +36,7 @@ from archie.agent import (
     UsageUpdated,
 )
 from archie.artifact_store import ArtifactStore
-from archie.config import Config, load_config
+from archie.config import load_config
 from archie.llm import BedrockClient
 from archie.models import get_model_info
 from archie.project import detect_project_dir
@@ -460,23 +460,15 @@ class ArchieApp(App):
         self._update_status()
 
     def switch_model(self, model_id: str) -> None:
-        """Switch to a different model and start a new session."""
+        """Switch to a different model mid-session. Takes effect on the next turn.
+
+        Updates the LLM client, session pricing, and status bar. History and sandbox
+        are preserved — no restart needed.
+        """
         from archie.models import get_model_info
 
         self.model_info = get_model_info(model_id)
-        self.config = Config(
-            model=model_id,
-            region=self.config.region,
-            project_root=self.config.project_root,
-            brain_dir=self.config.brain_dir,
-            tools=self.config.tools,
-            sandbox=self.config.sandbox,
-            memory=self.config.memory,
-        )
-        self.llm = BedrockClient(
-            model_id=model_id,
-            region=self.config.region,
-            max_output_tokens=self.model_info.max_output_tokens,
-        )
-        self.action_new_session()
+        self.llm.model_id = model_id
+        self.session.model_info = self.model_info
+        self.query_one("#status", StatusBar).model_name = self.model_info.name
         self.notify(f"Switched to {self.model_info.name}")
