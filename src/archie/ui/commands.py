@@ -8,10 +8,8 @@ The Provider class implements two methods:
 - discover(): yields all commands (shown when palette opens with no query)
 - search(): filters commands as the user types (fuzzy matching via matcher)
 
-"Change Model" is implemented as a two-step flow:
-1. User selects "Change Model" from the palette
-2. We iterate available models from MODELS dict and switch to the selected one
-   by updating the config, creating a new LLM client, and starting a new session
+"Change Model" switches the active model mid-session without restarting.
+History and sandbox are preserved; the new model takes effect on the next turn.
 """
 
 from textual.command import Hit, Hits, Provider
@@ -34,7 +32,7 @@ class ArchieCommands(Provider):
                 1.0,
                 f"Change Model → {info.name}",
                 self._make_change_model(model_id),
-                help=f"Switch to {info.name} (starts new session)",
+                help=f"Switch to {info.name} (next turn)",
             )
         # Session management
         yield Hit(
@@ -63,7 +61,7 @@ class ArchieCommands(Provider):
                     score,
                     matcher.highlight(label),
                     self._make_change_model(model_id),
-                    help=f"Switch to {info.name} (starts new session)",
+                    help=f"Switch to {info.name} (next turn)",
                 )
 
         # Session management
