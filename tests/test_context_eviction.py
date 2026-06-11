@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from archie.agent import AgentLoop
 from archie.artifact_store import ArtifactStore
-from archie.engine import Engine
 from archie.llm.bedrock import Done, ToolUseEvent, Usage
 from archie.llm.bedrock import TextDelta as LlmTextDelta
 from archie.models import ModelInfo
@@ -53,7 +53,7 @@ def registry():
     return reg
 
 
-def _mock_llm_stream(*call_responses):
+def _mock_llm(*call_responses):
     mock = MagicMock()
     mock.stream = MagicMock(side_effect=[iter(r) for r in call_responses])
     return mock
@@ -96,7 +96,7 @@ class TestEvictionLogic:
 
     def test_no_eviction_on_first_turn(self, session, registry):
         """First turn's tool results are never evicted."""
-        llm = _mock_llm_stream(
+        llm = _mock_llm(
             [
                 ToolUseEvent(tool_use_id="tu_1", name="echo", input={"text": "hello"}),
                 Usage(input_tokens=10, output_tokens=5),
@@ -108,12 +108,10 @@ class TestEvictionLogic:
                 Done(stop_reason="end_turn"),
             ],
         )
-        engine = Engine(llm, session, registry, "system")
-        list(engine.run("first message"))
+        agent = AgentLoop(llm, session, registry, "system", lambda _: None)
+        agent.run_turn("first message")
 
-        # Build context — nothing should be evicted (only 1 completed turn)
-        messages = engine._build_context()
-        # Find the tool result message
+        messages = agent._build_context()
         tool_result_msg = next(
             m
             for m in messages
@@ -125,9 +123,8 @@ class TestEvictionLogic:
     def test_eviction_after_three_turns(self, session, registry):
         """Tool results from turn 1 are evicted after 3 completed turns."""
         store = ArtifactStore()
-        # Simulate 3 completed user turns with tool use
         for i in range(3):
-            llm = _mock_llm_stream(
+            llm = _mock_llm(
                 [
                     ToolUseEvent(tool_use_id=f"tu_{i}", name="echo", input={"text": f"msg{i}"}),
                     Usage(input_tokens=10, output_tokens=5),
@@ -139,13 +136,13 @@ class TestEvictionLogic:
                     Done(stop_reason="end_turn"),
                 ],
             )
-            engine = Engine(llm, session, registry, "system", artifact_store=store)
-            engine._completed_turns = i  # Set previous completed count
-            list(engine.run(f"message {i}"))
+            agent = AgentLoop(
+                llm, session, registry, "system", lambda _: None, artifact_store=store
+            )
+            agent._completed_turns = i
+            agent.run_turn(f"message {i}")
 
-        # After 3 turns, build context — turn 0's tool result should be evicted
-        messages = engine._build_context()
-        # Find the first tool result (tu_0)
+        messages = agent._build_context()
         tool_results = []
         for m in messages:
             if m["role"] == "user":
@@ -153,12 +150,10 @@ class TestEvictionLogic:
                     if "toolResult" in b:
                         tool_results.append(b)
 
-        # First tool result should be evicted (stub)
         first_result_text = tool_results[0]["toolResult"]["content"][0]["text"]
         assert "[evicted:" in first_result_text
         assert "tu_0" in first_result_text
 
-        # Last tool result should be full
         last_result_text = tool_results[-1]["toolResult"]["content"][0]["text"]
         assert "[evicted" not in last_result_text
 
@@ -167,7 +162,6 @@ class TestEvictionLogic:
         store = ArtifactStore()
         store.put("tu_old", "full content", "5 lines")
 
-        # Manually build session state to test _build_context directly
         session.add_turn("user", "first message")
         session.add_turn(
             "assistant",
@@ -178,17 +172,17 @@ class TestEvictionLogic:
             [ToolResultBlock(tool_use_id="tu_old", content="Echo: hi", is_error=False)],
         )
         session.add_turn("assistant", [TextBlock(text="Got it")])
-        # Add 2 more user text turns to push the first one past eviction
         session.add_turn("user", "second message")
         session.add_turn("assistant", [TextBlock(text="Ok")])
         session.add_turn("user", "third message")
         session.add_turn("assistant", [TextBlock(text="Sure")])
 
-        engine = Engine(MagicMock(), session, registry, "system", artifact_store=store)
-        engine._completed_turns = 3
+        agent = AgentLoop(
+            MagicMock(), session, registry, "system", lambda _: None, artifact_store=store
+        )
+        agent._completed_turns = 3
 
-        messages = engine._build_context()
-        # Find the evicted tool result
+        messages = agent._build_context()
         for m in messages:
             for b in m.get("content", []):
                 if "toolResult" in b:
@@ -204,7 +198,6 @@ class TestEvictionLogic:
         """Tool results from last 2 user turns are kept in full."""
         store = ArtifactStore()
 
-        # Build a session with 3 user text turns + tool use
         session.add_turn("user", "old message")
         session.add_turn(
             "assistant",
@@ -237,28 +230,28 @@ class TestEvictionLogic:
             [ToolResultBlock(tool_use_id="tu_2", content="Echo: current", is_error=False)],
         )
 
-        engine = Engine(MagicMock(), session, registry, "system", artifact_store=store)
-        engine._completed_turns = 3
+        agent = AgentLoop(
+            MagicMock(), session, registry, "system", lambda _: None, artifact_store=store
+        )
+        agent._completed_turns = 3
 
-        messages = engine._build_context()
+        messages = agent._build_context()
         tool_results = []
         for m in messages:
             for b in m.get("content", []):
                 if "toolResult" in b:
                     tool_results.append(b["toolResult"]["content"][0]["text"])
 
-        # tu_1 (recent) and tu_2 (current) should be full
         assert tool_results[1] == "Echo: recent"
         assert tool_results[2] == "Echo: current"
 
 
 class TestArtifactStoreIntegration:
-    """Tests that the engine stores artifacts during tool execution."""
+    """Tests that the agent stores artifacts during tool execution."""
 
     def test_stores_artifact_on_tool_execution(self, session, registry):
-        """Engine stores full tool result in artifact store after execution."""
         store = ArtifactStore()
-        llm = _mock_llm_stream(
+        llm = _mock_llm(
             [
                 ToolUseEvent(tool_use_id="tu_1", name="echo", input={"text": "test"}),
                 Usage(input_tokens=10, output_tokens=5),
@@ -270,24 +263,23 @@ class TestArtifactStoreIntegration:
                 Done(stop_reason="end_turn"),
             ],
         )
-        engine = Engine(llm, session, registry, "system", artifact_store=store)
-        list(engine.run("test"))
+        agent = AgentLoop(llm, session, registry, "system", lambda _: None, artifact_store=store)
+        agent.run_turn("test")
 
         artifact = store.get("tu_1")
         assert artifact is not None
         assert artifact["content"] == "Echo: test"
-        assert artifact["summary"]  # Should have a summary
+        assert artifact["summary"]
 
     def test_completed_turns_incremented(self, session, registry):
-        """_completed_turns is incremented after each successful run."""
-        llm = _mock_llm_stream(
+        llm = _mock_llm(
             [
                 LlmTextDelta(text="Hi"),
                 Usage(input_tokens=10, output_tokens=5),
                 Done(stop_reason="end_turn"),
             ]
         )
-        engine = Engine(llm, session, registry, "system")
-        assert engine._completed_turns == 0
-        list(engine.run("hello"))
-        assert engine._completed_turns == 1
+        agent = AgentLoop(llm, session, registry, "system", lambda _: None)
+        assert agent._completed_turns == 0
+        agent.run_turn("hello")
+        assert agent._completed_turns == 1
