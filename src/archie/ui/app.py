@@ -124,6 +124,7 @@ class ArchieApp(App):
             uid=os.getuid(),
         )
         allowed = [Path(p) for p in self.config.tools.allowed_directories]
+        allowed.append(Path.home() / ".archie")
         self.artifact_store = ArtifactStore()
         self.tool_registry = create_default_registry(
             self.project_dir,
