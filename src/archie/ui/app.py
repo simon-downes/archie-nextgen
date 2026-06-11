@@ -136,6 +136,8 @@ class ArchieApp(App):
         self._turn_count: int = 0
         self._throbber: Throbber | None = None
         self._git_branch = _detect_git_branch(self.project_dir)
+        # Incremented on new_session — stale events from old agents are dropped
+        self._agent_generation: int = 0
 
     def compose(self) -> ComposeResult:
         with TabbedContent():
@@ -152,11 +154,18 @@ class ArchieApp(App):
     # --- Agent event callback (runs on worker thread) ---
 
     def _on_agent_event(self, event: AgentEvent) -> None:
-        """Marshal agent events to the main thread for widget updates."""
-        self.call_from_thread(self._handle_event, event)
+        """Marshal agent events to the main thread for widget updates.
 
-    def _handle_event(self, event: AgentEvent) -> None:
+        Checks that the event came from the current agent — stale events from a
+        previous agent (after new_session) are silently dropped.
+        """
+        gen = self._agent_generation
+        self.call_from_thread(self._handle_event, event, gen)
+
+    def _handle_event(self, event: AgentEvent, generation: int) -> None:
         """Dispatch one agent event to the appropriate widget update."""
+        if generation != self._agent_generation:
+            return  # Stale event from a previous session's agent
         conv = self.query_one("#conversation", Conversation)
 
         if isinstance(event, TextDeltaEvent):
@@ -355,6 +364,8 @@ class ArchieApp(App):
             self._streaming = None
             self._stream_text = ""
 
+        # Bump generation so stale events from the old agent are ignored
+        self._agent_generation += 1
         self.sandbox.destroy()
 
         self.session = Session(
@@ -405,8 +416,10 @@ class ArchieApp(App):
             model=model_id,
             region=self.config.region,
             project_root=self.config.project_root,
+            brain_dir=self.config.brain_dir,
             tools=self.config.tools,
             sandbox=self.config.sandbox,
+            memory=self.config.memory,
         )
         self.llm = BedrockClient(
             model_id=model_id,

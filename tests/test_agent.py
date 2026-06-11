@@ -130,19 +130,22 @@ class TestToolUse:
 
     def test_iteration_cap(self, session, registry):
         """Hits the 50-iteration safety cap."""
-        # Create 51 identical tool-calling responses
-        tool_response = [
-            ToolUseEvent(tool_use_id="t1", name="echo", input={"text": "loop"}),
-            Usage(input_tokens=10, output_tokens=5),
-            Done(stop_reason="tool_use"),
+        # Use distinct inputs to avoid the consecutive-call blocker
+        tool_responses = [
+            [
+                ToolUseEvent(tool_use_id=f"t{i}", name="echo", input={"text": f"msg{i}"}),
+                Usage(input_tokens=10, output_tokens=5),
+                Done(stop_reason="tool_use"),
+            ]
+            for i in range(51)
         ]
-        llm = _mock_llm(*([tool_response] * 51))
+        llm = _mock_llm(*tool_responses)
         events = []
         agent = AgentLoop(llm, session, registry, "system", events.append)
 
         agent.run_turn("Loop forever")
 
-        # Should still complete (not crash)
+        # Should complete without crashing
         assert events[-1] == TurnComplete(stop_reason="tool_use")
 
 
@@ -150,7 +153,7 @@ class TestInterrupt:
     """Cooperative interruption scenarios."""
 
     def test_interrupt_mid_stream(self, session, registry):
-        """Interrupt during streaming preserves partial text."""
+        """Interrupt during streaming preserves partial text in session."""
 
         def stream_with_interrupt(*args, **kwargs):
             yield LlmTextDelta(text="Partial ")
@@ -168,8 +171,10 @@ class TestInterrupt:
         agent.run_turn("Say something")
 
         assert any(isinstance(e, TurnInterrupted) for e in events)
-        # Session should not have a dangling user message (it got an assistant response)
-        # The partial text "Partial " should trigger the interrupt on the next check
+        # Partial text should be committed to session as an assistant turn
+        assistant_turns = [t for t in session.turns if t.role == "assistant"]
+        assert len(assistant_turns) == 1
+        assert assistant_turns[0].content[0].text == "Partial "
 
     def test_interrupt_before_response_removes_user_message(self, session, registry):
         """Interrupt before any response drops the orphan user message."""

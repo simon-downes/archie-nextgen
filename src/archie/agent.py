@@ -229,7 +229,11 @@ class AgentLoop:
             self._emit(TurnError(message=str(e)))
 
     def _do_request(self) -> tuple[list[str], list[ToolUseBlock], int, int, str]:
-        """Stream one LLM call. Returns (text_chunks, tool_blocks, in_tok, out_tok, stop)."""
+        """Stream one LLM call. Returns (text_chunks, tool_blocks, in_tok, out_tok, stop).
+
+        On interrupt mid-stream, commits any partial text to session before re-raising
+        so the interrupted response is preserved in history.
+        """
         self._check_interrupt()
 
         text_chunks: list[str] = []
@@ -238,23 +242,29 @@ class AgentLoop:
         turn_input = 0
         turn_output = 0
 
-        for event in self.llm.stream(
-            messages=self._build_context(),
-            system=self.system_prompt,
-            tool_config=self.tools.to_tool_config() or None,
-        ):
-            self._check_interrupt()
-            match event:
-                case LlmTextDelta(text=text):
-                    text_chunks.append(text)
-                    self._emit(TextDeltaEvent(text=text))
-                case ToolUseEvent(tool_use_id=tid, name=name, input=inp):
-                    tool_use_blocks.append(ToolUseBlock(tool_use_id=tid, name=name, input=inp))
-                case Usage(input_tokens=it, output_tokens=ot):
-                    turn_input = it
-                    turn_output = ot
-                case Done(stop_reason=sr):
-                    stop_reason = sr
+        try:
+            for event in self.llm.stream(
+                messages=self._build_context(),
+                system=self.system_prompt,
+                tool_config=self.tools.to_tool_config() or None,
+            ):
+                self._check_interrupt()
+                match event:
+                    case LlmTextDelta(text=text):
+                        text_chunks.append(text)
+                        self._emit(TextDeltaEvent(text=text))
+                    case ToolUseEvent(tool_use_id=tid, name=name, input=inp):
+                        tool_use_blocks.append(ToolUseBlock(tool_use_id=tid, name=name, input=inp))
+                    case Usage(input_tokens=it, output_tokens=ot):
+                        turn_input = it
+                        turn_output = ot
+                    case Done(stop_reason=sr):
+                        stop_reason = sr
+        except _InterruptedError:
+            # Commit partial text to session before propagating so it's preserved
+            if text_chunks:
+                self.session.add_turn("assistant", [TextBlock(text="".join(text_chunks))])
+            raise
 
         return text_chunks, tool_use_blocks, turn_input, turn_output, stop_reason
 
@@ -364,7 +374,8 @@ class AgentLoop:
                 ],
             )
 
-        # If the turn has only the user's original text message, remove it
+        # If the turn has only the user's original text message with nothing after it,
+        # remove it — re-sending a prompt that got no response would confuse the model.
         if len(self.session.turns) >= 1:
             last_user_turns = [
                 t
@@ -379,7 +390,12 @@ class AgentLoop:
                     self.session.turns.remove(last)
 
     def _build_context(self) -> list[dict]:
-        """Build Bedrock-format messages with old tool results replaced by stubs."""
+        """Build Bedrock-format messages with old tool results replaced by stubs.
+
+        Note: this duplicates the message→dict serialization from bedrock.py's
+        _turns_to_bedrock_messages, but with eviction logic interleaved. The two
+        must stay in sync on wire format.
+        """
         turns = self.session.turns
         eviction_boundary = self._find_eviction_boundary(turns)
 
@@ -442,6 +458,7 @@ class AgentLoop:
                     if isinstance(block, ToolUseBlock) and block.tool_use_id == tool_use_id:
                         tool_name = block.name
                         break
-                break
+                if tool_name != "unknown":
+                    break
 
         return f"[evicted: {tool_name} — {summary} | id: {tool_use_id}]"

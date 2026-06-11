@@ -11,7 +11,7 @@ The LLM client (llm/bedrock.py) translates between these and the provider's form
 from dataclasses import dataclass
 
 
-@dataclass
+@dataclass(frozen=True)
 class TextBlock:
     """A block of text content (the most common type).
 
@@ -22,7 +22,7 @@ class TextBlock:
     text: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class ToolUseBlock:
     """The model wants to call a tool.
 
@@ -37,7 +37,7 @@ class ToolUseBlock:
     input: dict
 
 
-@dataclass
+@dataclass(frozen=True)
 class ToolResultBlock:
     """The result of executing a tool.
 
