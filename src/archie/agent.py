@@ -183,7 +183,7 @@ class AgentLoop:
         """
         self._interrupt.clear()
         self.session.add_turn("user", user_message)
-        log.info("turn_start user=%r", user_message[:100])
+        log.info("turn_start session=%s user=%r", self.session.session_id, user_message[:100])
 
         turn_log = TurnLog(
             when=datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
@@ -351,7 +351,7 @@ class AgentLoop:
                     ToolStarted(tool_use_id=block.tool_use_id, name=block.name, input=block.input)
                 )
 
-                content, is_error = self._run_one_tool(block.name, block.input)
+                content, is_error = self._run_one_tool(block.name, block.input, block.tool_use_id)
                 summary = summarise_tool_output(block.name, block.input, content, is_error)
                 self.artifact_store.put(block.tool_use_id, content, summary)
 
@@ -392,7 +392,7 @@ class AgentLoop:
 
         self.session.add_turn("user", results)
 
-    def _run_one_tool(self, name: str, args: dict) -> tuple[str, bool]:
+    def _run_one_tool(self, name: str, args: dict, tool_use_id: str) -> tuple[str, bool]:
         """Execute a single tool. Returns (result_content, is_error)."""
         # Consecutive-call detection
         call_key = (name, _hash_args(args))
@@ -413,17 +413,25 @@ class AgentLoop:
         if spec is None:
             return f"Error: Unknown tool '{name}'", True
 
-        log.debug("tool %s input: %s", name, str(args)[:500])
+        log.debug("tool_call id=%s name=%s input=%s", tool_use_id, name, str(args)[:500])
         t0 = time.time()
         try:
             result = spec.handler(args)
         except Exception as e:
             duration = time.time() - t0
-            log.info("tool %s completed in %.1fs (error: %s)", name, duration, str(e)[:100])
+            log.info(
+                "tool_done id=%s name=%s duration=%.1fs status=error error=%s",
+                tool_use_id,
+                name,
+                duration,
+                str(e)[:100],
+            )
             return f"Error: Tool execution failed: {e}", True
 
         duration = time.time() - t0
-        log.info("tool %s completed in %.1fs (success)", name, duration)
+        log.info(
+            "tool_done id=%s name=%s duration=%.1fs status=success", tool_use_id, name, duration
+        )
 
         if self._consecutive_count == CONSECUTIVE_WARN:
             result += (
