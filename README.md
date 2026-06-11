@@ -9,6 +9,7 @@ Personal AI coding assistant with a terminal UI, tool-calling, and a Docker sand
 - Config lives at `~/.archie/nextgen.yaml` and is auto-created with defaults on first run — edit it to change the model or region.
 - Model IDs must use the Bedrock cross-region inference profile format (e.g. `eu.anthropic.claude-sonnet-4-6`) — bare model IDs are not accepted.
 - The sandbox container is per-session and disposable — it is started lazily on first tool use and destroyed when the session ends.
+- Debug logging is always on at `~/.archie/nextgen.log` (rotating, 10MB × 3 backups) — check it when something goes wrong.
 - Linting uses Ruff with line length 100 — run `uv run ruff check` and `uv run ruff format` before committing.
 
 ## Installation
@@ -35,10 +36,22 @@ uv run archie chat
 uv run archie build
 ```
 
-Inside the TUI:
-- Type your message and press **Enter** to send.
-- Press **Esc** to interrupt/cancel a running response.
-- Prefix a message with `!` to run a shell command directly (user convenience — not sent to the model).
+### Key Bindings
+
+| Key | Action |
+|-----|--------|
+| Enter | Submit prompt |
+| Shift+Enter | Insert newline |
+| Esc | Interrupt in-flight turn (preserves completed work) |
+| Ctrl+G | Open `$EDITOR` to compose prompt (save to submit, quit to cancel) |
+| Ctrl+P | Command palette (switch model, new session, quit) |
+| Ctrl+N | New session (destroys sandbox, clears conversation) |
+| Ctrl+Q | Quit |
+| `!command` | Run a shell command directly in the sandbox |
+
+### Model Switching
+
+Use Ctrl+P to switch models mid-session. The change takes effect on the next turn — history and sandbox are preserved, no restart needed.
 
 ## Configuration
 
@@ -46,22 +59,37 @@ Config file: `~/.archie/nextgen.yaml` (auto-created on first run).
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `model` | `eu.anthropic.claude-sonnet-4-6` | Bedrock inference profile ID |
+| `model` | `eu.anthropic.claude-fable-5` | Bedrock inference profile ID |
 | `region` | `eu-west-1` | AWS region for Bedrock API calls |
 | `project_root` | `~/dev` | Base directory for project detection |
 | `sandbox.image` | `archie-sandbox:nextgen` | Docker image name built by `archie build` |
 | `sandbox.mounts` | `[]` | Additional `host:container:mode` mount specs |
 | `tools.allowed_directories` | `[]` | Extra absolute paths the model can read/search |
 
-Available models:
+### Available Models
 
 | ID | Name | Context |
 |----|------|---------|
 | `eu.anthropic.claude-sonnet-4-6` | Claude Sonnet 4.6 | 1M tokens |
 | `eu.anthropic.claude-haiku-3-20250305-v1:0` | Claude Haiku | 200K tokens |
 | `eu.anthropic.claude-opus-4-6-v1` | Claude Opus 4.6 | 1M tokens |
+| `eu.anthropic.claude-opus-4-8-v1` | Claude Opus 4.8 | 1M tokens |
+| `eu.anthropic.claude-fable-5` | Claude Fable 5 | 1M tokens |
 
 Swap `eu.` for `us.` to use US cross-region inference profiles.
+
+## Cost Management
+
+Archie uses prompt caching to reduce costs. The status bar shows a four-way token breakdown:
+
+```
+in:fresh/cache_read/cache_write out:output │ ctx:N% │ $cost
+```
+
+- **Cache read** tokens are ~10x cheaper than fresh input — these climb as the session grows
+- **Cache write** is a one-time premium when new content enters the cache prefix
+- The second turn in a session is dramatically cheaper than the first (everything is cached)
+- Use Sonnet for routine work, Opus/Fable for hard problems
 
 ## Sandbox
 
