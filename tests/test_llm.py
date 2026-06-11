@@ -9,6 +9,11 @@ from archie.session import Turn
 from archie.types import TextBlock, ToolResultBlock, ToolUseBlock
 
 
+def _user_turn(text: str) -> Turn:
+    """Helper to create a simple user Turn for tests."""
+    return Turn(id="t0001", role="user", content=[TextBlock(text=text)])
+
+
 @pytest.fixture
 def mock_client():
     """Create a BedrockClient with mocked boto3."""
@@ -53,7 +58,7 @@ def test_stream_text_deltas(mock_client):
 
     events = list(
         client.stream(
-            messages=[{"role": "user", "content": [{"text": "hi"}]}],
+            messages=[_user_turn("hi")],
             system="Be helpful.",
         )
     )
@@ -143,7 +148,7 @@ def test_stream_tool_use_parsing(mock_client):
 
     events = list(
         client.stream(
-            messages=[{"role": "user", "content": [{"text": "read main.py"}]}],
+            messages=[_user_turn("read main.py")],
             system="test",
         )
     )
@@ -190,7 +195,7 @@ def test_stream_multiple_tool_calls(mock_client):
 
     events = list(
         client.stream(
-            messages=[{"role": "user", "content": [{"text": "find todos"}]}],
+            messages=[_user_turn("find todos")],
             system="test",
         )
     )
@@ -222,7 +227,7 @@ def test_stream_tool_config_passed(mock_client):
 
     list(
         client.stream(
-            messages=[{"role": "user", "content": [{"text": "hi"}]}],
+            messages=[_user_turn("hi")],
             system="test",
             tool_config=tool_config,
         )
@@ -250,7 +255,7 @@ def test_stream_retry_on_throttle(mock_client):
 
     events = list(
         client.stream(
-            messages=[{"role": "user", "content": [{"text": "hi"}]}],
+            messages=[_user_turn("hi")],
             system="test",
         )
     )
@@ -269,7 +274,7 @@ def test_stream_no_retry_on_validation_error(mock_client):
     with pytest.raises(validation_exc):
         list(
             client.stream(
-                messages=[{"role": "user", "content": [{"text": "hi"}]}],
+                messages=[_user_turn("hi")],
                 system="test",
             )
         )
@@ -289,7 +294,7 @@ def test_usage_defaults_to_zero(mock_client):
 
     events = list(
         client.stream(
-            messages=[{"role": "user", "content": [{"text": "hi"}]}],
+            messages=[_user_turn("hi")],
             system="test",
         )
     )

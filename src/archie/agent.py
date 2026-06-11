@@ -475,51 +475,42 @@ class AgentLoop:
                 if idx == len(self.session.turns) - 1:
                     self.session.turns.remove(last)
 
-    def _build_context(self) -> list[dict]:
-        """Build Bedrock-format messages with old tool results replaced by stubs.
+    def _build_context(self) -> list[Turn]:
+        """Build the message list with old tool results replaced by stubs.
 
-        Note: this duplicates the message→dict serialization from bedrock.py's
-        _turns_to_bedrock_messages, but with eviction logic interleaved. The two
-        must stay in sync on wire format.
+        Returns Turn objects — bedrock.py owns all wire-format serialization via
+        _turns_to_bedrock_messages. For evicted results we create new Turn objects
+        with stub ToolResultBlocks (ContentBlocks are frozen, can't mutate in place).
         """
         turns = self.session.turns
         eviction_boundary = self._find_eviction_boundary(turns)
 
-        messages = []
+        result = []
         for i, turn in enumerate(turns):
-            content_blocks = []
-            for block in turn.content:
-                match block:
-                    case TextBlock(text=text):
-                        content_blocks.append({"text": text})
-                    case ToolUseBlock(tool_use_id=tid, name=name, input=inp):
-                        content_blocks.append(
-                            {"toolUse": {"toolUseId": tid, "name": name, "input": inp}}
+            if (
+                i < eviction_boundary
+                and turn.role == "user"
+                and any(isinstance(b, ToolResultBlock) for b in turn.content)
+            ):
+                new_content = []
+                for block in turn.content:
+                    if isinstance(block, ToolResultBlock):
+                        stub = self._make_eviction_stub(block.tool_use_id, turns[:i])
+                        new_content.append(
+                            ToolResultBlock(
+                                tool_use_id=block.tool_use_id,
+                                content=stub,
+                                is_error=block.is_error,
+                            )
                         )
-                    case ToolResultBlock(tool_use_id=tid, content=content, is_error=is_error):
-                        if i < eviction_boundary:
-                            stub = self._make_eviction_stub(tid, turns[:i])
-                            content_blocks.append(
-                                {
-                                    "toolResult": {
-                                        "toolUseId": tid,
-                                        "content": [{"text": stub}],
-                                        "status": "error" if is_error else "success",
-                                    }
-                                }
-                            )
-                        else:
-                            content_blocks.append(
-                                {
-                                    "toolResult": {
-                                        "toolUseId": tid,
-                                        "content": [{"text": content}],
-                                        "status": "error" if is_error else "success",
-                                    }
-                                }
-                            )
-            messages.append({"role": turn.role, "content": content_blocks})
-        return messages
+                    else:
+                        new_content.append(block)
+                result.append(
+                    Turn(id=turn.id, role=turn.role, content=new_content, timestamp=turn.timestamp)
+                )
+            else:
+                result.append(turn)
+        return result
 
     def _find_eviction_boundary(self, turns: list[Turn]) -> int:
         """Find the turn index before which tool results should be evicted."""

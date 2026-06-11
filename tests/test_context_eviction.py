@@ -111,14 +111,10 @@ class TestEvictionLogic:
         agent = AgentLoop(llm, session, registry, "system", lambda _: None)
         agent.run_turn("first message")
 
-        messages = agent._build_context()
-        tool_result_msg = next(
-            m
-            for m in messages
-            if m["role"] == "user" and any("toolResult" in b for b in m["content"])
-        )
-        result_block = next(b for b in tool_result_msg["content"] if "toolResult" in b)
-        assert "[evicted" not in result_block["toolResult"]["content"][0]["text"]
+        turns = agent._build_context()
+        results = [b for t in turns for b in t.content if isinstance(b, ToolResultBlock)]
+        assert results
+        assert "[evicted" not in results[0].content
 
     def test_eviction_after_three_turns(self, session, registry):
         """Tool results from turn 1 are evicted after 3 completed turns."""
@@ -145,16 +141,16 @@ class TestEvictionLogic:
         messages = agent._build_context()
         tool_results = []
         for m in messages:
-            if m["role"] == "user":
-                for b in m["content"]:
-                    if "toolResult" in b:
+            if m.role == "user":
+                for b in m.content:
+                    if isinstance(b, ToolResultBlock):
                         tool_results.append(b)
 
-        first_result_text = tool_results[0]["toolResult"]["content"][0]["text"]
+        first_result_text = tool_results[0].content
         assert "[evicted:" in first_result_text
         assert "tu_0" in first_result_text
 
-        last_result_text = tool_results[-1]["toolResult"]["content"][0]["text"]
+        last_result_text = tool_results[-1].content
         assert "[evicted" not in last_result_text
 
     def test_eviction_stub_contains_tool_name_and_summary(self, session, registry):
@@ -184,14 +180,12 @@ class TestEvictionLogic:
 
         messages = agent._build_context()
         for m in messages:
-            for b in m.get("content", []):
-                if "toolResult" in b:
-                    text = b["toolResult"]["content"][0]["text"]
-                    if "[evicted:" in text:
-                        assert "echo" in text
-                        assert "5 lines" in text
-                        assert "tu_old" in text
-                        return
+            for b in m.content:
+                if isinstance(b, ToolResultBlock) and "[evicted:" in b.content:
+                    assert "echo" in b.content
+                    assert "5 lines" in b.content
+                    assert "tu_old" in b.content
+                    return
         pytest.fail("No evicted stub found in context")
 
     def test_recent_results_kept_full(self, session, registry):
@@ -238,9 +232,9 @@ class TestEvictionLogic:
         messages = agent._build_context()
         tool_results = []
         for m in messages:
-            for b in m.get("content", []):
-                if "toolResult" in b:
-                    tool_results.append(b["toolResult"]["content"][0]["text"])
+            for b in m.content:
+                if isinstance(b, ToolResultBlock):
+                    tool_results.append(b.content)
 
         assert tool_results[1] == "Echo: recent"
         assert tool_results[2] == "Echo: current"

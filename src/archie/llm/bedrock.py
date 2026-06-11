@@ -133,15 +133,12 @@ class BedrockClient:
 
     def stream(
         self,
-        messages: list[Turn] | list[dict],
+        messages: list[Turn],
         system: str,
         tool_config: list[dict] | None = None,
     ) -> Generator[StreamEvent]:
         """Send a conversation to Bedrock and yield response events."""
-        if messages and isinstance(messages[0], Turn):
-            bedrock_messages = _turns_to_bedrock_messages(messages)
-        else:
-            bedrock_messages = messages
+        bedrock_messages = _turns_to_bedrock_messages(messages)
 
         # System prompt cache point
         system_blocks = [{"text": system}]
