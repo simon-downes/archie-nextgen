@@ -221,6 +221,8 @@ class Session:
                 "model": turn_log.model or self.model_id,
                 "input_tokens": turn_log.input_tokens,
                 "output_tokens": turn_log.output_tokens,
+                "cache_read_tokens": turn_log.cache_read_tokens,
+                "cache_write_tokens": turn_log.cache_write_tokens,
                 "cost": round(cost, 6),
                 "interrupted": turn_log.interrupted,
             },

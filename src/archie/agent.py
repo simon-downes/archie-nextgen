@@ -171,6 +171,8 @@ class AgentLoop:
         )
         total_input = 0
         total_output = 0
+        total_cache_read = 0
+        total_cache_write = 0
 
         try:
             for _ in range(50):
@@ -185,6 +187,8 @@ class AgentLoop:
                 ) = self._do_request()
                 total_input += turn_input
                 total_output += turn_output
+                total_cache_read += turn_cache_read
+                total_cache_write += turn_cache_write
 
                 # Record assistant turn
                 assistant_content: list[TextBlock | ToolUseBlock] = []
@@ -223,6 +227,8 @@ class AgentLoop:
 
             turn_log.input_tokens = total_input
             turn_log.output_tokens = total_output
+            turn_log.cache_read_tokens = total_cache_read
+            turn_log.cache_write_tokens = total_cache_write
             self.session.flush_turn(turn_log)
             self._completed_turns += 1
             self._emit(TurnComplete(stop_reason=stop_reason))
@@ -231,6 +237,8 @@ class AgentLoop:
             self._finalise_interrupted_turn()
             turn_log.input_tokens = total_input
             turn_log.output_tokens = total_output
+            turn_log.cache_read_tokens = total_cache_read
+            turn_log.cache_write_tokens = total_cache_write
             turn_log.interrupted = True
             self.session.flush_turn(turn_log)
             self._emit(TurnInterrupted())
@@ -240,6 +248,8 @@ class AgentLoop:
             self._finalise_interrupted_turn()
             turn_log.input_tokens = total_input
             turn_log.output_tokens = total_output
+            turn_log.cache_read_tokens = total_cache_read
+            turn_log.cache_write_tokens = total_cache_write
             self.session.flush_turn(turn_log)
             self._emit(TurnError(message=str(e)))
 
