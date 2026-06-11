@@ -352,7 +352,9 @@ class AgentLoop:
                     }
                 )
 
-                content = truncate_result(content)
+                spec = self.tools.get(block.name)
+                if not spec or not spec.self_truncating:
+                    content = truncate_result(content)
                 results.append(
                     ToolResultBlock(
                         tool_use_id=block.tool_use_id, content=content, is_error=is_error

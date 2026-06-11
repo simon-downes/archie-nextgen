@@ -38,6 +38,7 @@ class ToolSpec:
     description: str
     schema: dict
     handler: Callable[[dict], str]
+    self_truncating: bool = False  # If True, skip truncate_result — tool manages its own budget
 
 
 class ToolRegistry:

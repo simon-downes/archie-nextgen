@@ -123,22 +123,32 @@ def make_read_file_spec(
             selected = lines[offset:]
             truncated = False
 
-        # --- Format with line numbers + length cap ---
+        # --- Format with line numbers, respecting char budget ---
+        # Stop emitting lines when approaching the budget so the pagination hint
+        # is accurate (no silent truncation downstream). The budget is generous
+        # enough for most files; only large ones get split.
+        char_budget = 8000  # ~2000 lines of typical code
         numbered = []
+        chars_used = 0
+        budget_hit = False
         for i, line in enumerate(selected, start=offset + 1):
-            # Cap long lines to save context. These are usually minified JS,
-            # CSV data, or generated content that's not useful in full.
             if len(line) > _LINE_LENGTH_CAP:
                 line = line[:_LINE_LENGTH_CAP] + "...[truncated]"
-            # Right-align line number in 5 chars: "    1|", "   42|", "  999|"
-            numbered.append(f"{i:>5}|{line}")
+            formatted = f"{i:>5}|{line}\n"
+            if chars_used + len(formatted) > char_budget:
+                budget_hit = True
+                break
+            numbered.append(formatted.rstrip("\n"))
+            chars_used += len(formatted)
+
+        lines_shown = len(numbered)
+        actual_end_offset = offset + lines_shown
 
         # --- Build output with metadata header ---
-        # The header gives the model context about the file and how to navigate it.
         header = f"File: {path_str} ({total_lines} lines)"
-        if truncated:
-            showing = f"Showing lines {offset + 1}-{offset + len(selected)} of {total_lines}"
-            hint = f"Use offset={offset + limit} to continue reading"
+        if budget_hit or truncated:
+            showing = f"Showing lines {offset + 1}-{actual_end_offset} of {total_lines}"
+            hint = f"Use offset={actual_end_offset} to continue reading"
             header += f"\n{showing}\n{hint}"
 
         content = header + "\n\n" + "\n".join(numbered)
@@ -177,4 +187,5 @@ def make_read_file_spec(
             "required": ["path"],
         },
         handler=handler,
+        self_truncating=True,
     )
