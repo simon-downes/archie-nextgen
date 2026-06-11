@@ -24,6 +24,7 @@ def setup_logging() -> None:
 
     Called before anything else so even startup failures leave a trace.
     Output goes to ~/.archie/nextgen.log, never to stdout/stderr (Textual owns the terminal).
+    Botocore/urllib3 are suppressed to WARNING — their DEBUG output is auth noise.
     """
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     handler = RotatingFileHandler(
@@ -33,6 +34,10 @@ def setup_logging() -> None:
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
     root.addHandler(handler)
+
+    # Suppress noisy third-party loggers — only archie's own logs at DEBUG
+    for noisy in ("botocore", "urllib3", "boto3"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def check_docker_available() -> None:

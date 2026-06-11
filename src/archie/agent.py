@@ -183,6 +183,7 @@ class AgentLoop:
         """
         self._interrupt.clear()
         self.session.add_turn("user", user_message)
+        log.info("turn_start user=%r", user_message[:100])
 
         turn_log = TurnLog(
             when=datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
@@ -195,7 +196,8 @@ class AgentLoop:
         total_cache_write = 0
 
         try:
-            for _ in range(MAX_TOOL_ITERATIONS):
+            for iteration in range(MAX_TOOL_ITERATIONS):
+                log.debug("request_start iteration=%d", iteration + 1)
                 r = self._do_request()
                 total_input += r.input_tokens
                 total_output += r.output_tokens
@@ -243,6 +245,16 @@ class AgentLoop:
             turn_log.cache_write_tokens = total_cache_write
             self.session.flush_turn(turn_log)
             self._completed_turns += 1
+            log.info(
+                "turn_end status=complete iterations=%d input=%d output=%d "
+                "cache_read=%d cache_write=%d cost=%.4f",
+                iteration + 1,
+                total_input,
+                total_output,
+                total_cache_read,
+                total_cache_write,
+                self.session.total_cost,
+            )
             self._emit(TurnComplete(stop_reason=r.stop_reason))
 
         except _InterruptedError:
@@ -253,6 +265,7 @@ class AgentLoop:
             turn_log.cache_write_tokens = total_cache_write
             turn_log.interrupted = True
             self.session.flush_turn(turn_log)
+            log.info("turn_end status=interrupted iterations=%d", iteration + 1)
             self._emit(TurnInterrupted())
 
         except Exception as e:
@@ -263,6 +276,7 @@ class AgentLoop:
             turn_log.cache_read_tokens = total_cache_read
             turn_log.cache_write_tokens = total_cache_write
             self.session.flush_turn(turn_log)
+            log.info("turn_end status=error message=%r", str(e)[:200])
             self._emit(TurnError(message=str(e)))
 
     def _do_request(self) -> RequestResult:
