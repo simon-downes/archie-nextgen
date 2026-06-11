@@ -36,7 +36,7 @@ def setup_logging() -> None:
     root.addHandler(handler)
 
     # Suppress noisy third-party loggers — only archie's own logs at DEBUG
-    for noisy in ("botocore", "urllib3", "boto3"):
+    for noisy in ("botocore", "urllib3", "boto3", "markdown_it"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
