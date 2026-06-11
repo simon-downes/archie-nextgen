@@ -63,12 +63,14 @@ class TestPlainResponse:
     """Text-only responses (no tool use)."""
 
     def test_emits_text_deltas_and_turn_complete(self, session, registry):
-        llm = _mock_llm([
-            LlmTextDelta(text="Hello "),
-            LlmTextDelta(text="world!"),
-            Usage(input_tokens=10, output_tokens=5),
-            Done(stop_reason="end_turn"),
-        ])
+        llm = _mock_llm(
+            [
+                LlmTextDelta(text="Hello "),
+                LlmTextDelta(text="world!"),
+                Usage(input_tokens=10, output_tokens=5),
+                Done(stop_reason="end_turn"),
+            ]
+        )
         events = []
         agent = AgentLoop(llm, session, registry, "system", events.append)
 
@@ -80,11 +82,13 @@ class TestPlainResponse:
         assert events[-1] == TurnComplete(stop_reason="end_turn")
 
     def test_records_session_turn(self, session, registry):
-        llm = _mock_llm([
-            LlmTextDelta(text="OK"),
-            Usage(input_tokens=10, output_tokens=2),
-            Done(stop_reason="end_turn"),
-        ])
+        llm = _mock_llm(
+            [
+                LlmTextDelta(text="OK"),
+                Usage(input_tokens=10, output_tokens=2),
+                Done(stop_reason="end_turn"),
+            ]
+        )
         agent = AgentLoop(llm, session, registry, "system", lambda _: None)
 
         agent.run_turn("Hi")
@@ -185,8 +189,11 @@ class TestInterrupt:
         assert any(isinstance(e, TurnInterrupted) for e in events)
         # The orphan user message should be removed
         user_texts = [
-            t for t in session.turns
-            if t.role == "user" and t.content and hasattr(t.content[0], "text")
+            t
+            for t in session.turns
+            if t.role == "user"
+            and t.content
+            and hasattr(t.content[0], "text")
             and t.content[0].text == "Orphan"
         ]
         assert len(user_texts) == 0
@@ -202,12 +209,14 @@ class TestInterrupt:
         reg = ToolRegistry()
         reg.register(ToolSpec("t", "test", {"type": "object"}, first_tool_handler))
 
-        llm = _mock_llm([
-            ToolUseEvent(tool_use_id="a", name="t", input={}),
-            ToolUseEvent(tool_use_id="b", name="t", input={}),
-            Usage(input_tokens=10, output_tokens=5),
-            Done(stop_reason="tool_use"),
-        ])
+        llm = _mock_llm(
+            [
+                ToolUseEvent(tool_use_id="a", name="t", input={}),
+                ToolUseEvent(tool_use_id="b", name="t", input={}),
+                Usage(input_tokens=10, output_tokens=5),
+                Done(stop_reason="tool_use"),
+            ]
+        )
         events = []
         agent = AgentLoop(llm, session, reg, "system", events.append)
 
