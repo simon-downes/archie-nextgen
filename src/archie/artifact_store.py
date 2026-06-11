@@ -7,7 +7,11 @@ the model re-fetch evicted content when the stub isn't sufficient.
 
 
 class ArtifactStore:
-    """In-memory store of full tool results keyed by tool_use_id."""
+    """In-memory store of full tool results keyed by tool_use_id.
+
+    Deliberately not persisted — artifacts are only valid for the current session.
+    If sessions become resumable, this would need a durable backend (e.g. SQLite).
+    """
 
     def __init__(self):
         self._store: dict[str, dict[str, str]] = {}

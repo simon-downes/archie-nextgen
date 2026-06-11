@@ -38,12 +38,13 @@ class ToolSpec:
     description: str
     schema: dict
     handler: Callable[[dict], str]
+    self_truncating: bool = False  # If True, skip truncate_result — tool manages its own budget
 
 
 class ToolRegistry:
     """Registry of available tools.
 
-    The Engine uses this to:
+    The AgentLoop uses this to:
     1. Build the toolConfig sent to Bedrock (so the model knows what's available)
     2. Look up handlers when the model calls a tool
     """

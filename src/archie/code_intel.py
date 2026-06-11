@@ -37,7 +37,7 @@ class Symbol:
     name: str
     kind: str  # "function", "class", "method", "interface", etc.
     line: int  # 1-based line number
-    signature: str  # e.g. "def run(self, user_message) -> Generator[EngineEvent]"
+    signature: str  # e.g. "def run_turn(self, user_message) -> None"
     children: list["Symbol"] = field(default_factory=list)
 
 

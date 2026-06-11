@@ -9,7 +9,7 @@ This is one of the most-used tools. It reads files natively in Python
 
 Features:
 - Line-numbered output (e.g. "   42|content") for easy reference
-- Pagination via offset/limit params (default limit=500 lines)
+- Pagination via offset/limit params (reads entire file by default)
 - Binary file detection (null bytes in first 8KB)
 - Line-length cap (500 chars per line) to prevent context bloat
 - Pagination hint when truncated ("Use offset=N to continue reading")
@@ -29,11 +29,7 @@ from archie.tools import ToolSpec, tool_error, tool_result, validate_path
 # Lines longer than this are usually minified code, data, or generated content
 # that isn't useful to read in full. We truncate to save context budget.
 _LINE_LENGTH_CAP = 500
-
-# Default number of lines to return per call.
-# 500 lines is roughly 15-25KB of typical code — enough to understand a module
-# but not so much that we blow the context budget on a single read.
-_DEFAULT_LIMIT = 500
+_CHAR_BUDGET = 8000  # ~130-160 lines of typical code
 
 
 def make_read_file_spec(
@@ -44,7 +40,7 @@ def make_read_file_spec(
     Uses a closure pattern: the handler captures `cwd` and `allowed_directories`
     at registration time. This avoids needing to pass config through the tool
     dispatch system. The mtime cache also lives here as a closure variable —
-    it's tool-specific state that doesn't belong in the Engine.
+    it's tool-specific state that doesn't belong in the agent loop.
 
     Args:
         cwd: Working directory for resolving relative paths.
@@ -67,7 +63,7 @@ def make_read_file_spec(
         """
         path_str = params.get("path", "")
         offset = params.get("offset", 0)
-        limit = params.get("limit", _DEFAULT_LIMIT)
+        limit = params.get("limit", None)  # None = read entire file up to char budget
 
         # --- Security: enforce path allowlist ---
         try:
@@ -117,25 +113,39 @@ def make_read_file_spec(
         # --- Apply pagination ---
         # offset is 0-based (line 0 = first line of file).
         # The model can request arbitrary windows into the file.
-        selected = lines[offset : offset + limit]
-        truncated = (offset + limit) < total_lines
+        if limit is not None:
+            selected = lines[offset : offset + limit]
+            truncated = (offset + limit) < total_lines
+        else:
+            selected = lines[offset:]
+            truncated = False
 
-        # --- Format with line numbers + length cap ---
+        # --- Format with line numbers, respecting char budget ---
+        # Stop emitting lines when approaching the budget so the pagination hint
+        # is accurate (no silent truncation downstream). The budget is generous
+        # enough for most files; only large ones get split.
+        char_budget = _CHAR_BUDGET
         numbered = []
+        chars_used = 0
+        budget_hit = False
         for i, line in enumerate(selected, start=offset + 1):
-            # Cap long lines to save context. These are usually minified JS,
-            # CSV data, or generated content that's not useful in full.
             if len(line) > _LINE_LENGTH_CAP:
                 line = line[:_LINE_LENGTH_CAP] + "...[truncated]"
-            # Right-align line number in 5 chars: "    1|", "   42|", "  999|"
-            numbered.append(f"{i:>5}|{line}")
+            formatted = f"{i:>5}|{line}\n"
+            if chars_used + len(formatted) > char_budget:
+                budget_hit = True
+                break
+            numbered.append(formatted.rstrip("\n"))
+            chars_used += len(formatted)
+
+        lines_shown = len(numbered)
+        actual_end_offset = offset + lines_shown
 
         # --- Build output with metadata header ---
-        # The header gives the model context about the file and how to navigate it.
         header = f"File: {path_str} ({total_lines} lines)"
-        if truncated:
-            showing = f"Showing lines {offset + 1}-{offset + len(selected)} of {total_lines}"
-            hint = f"Use offset={offset + limit} to continue reading"
+        if budget_hit or truncated:
+            showing = f"Showing lines {offset + 1}-{actual_end_offset} of {total_lines}"
+            hint = f"Use offset={actual_end_offset} to continue reading"
             header += f"\n{showing}\n{hint}"
 
         content = header + "\n\n" + "\n".join(numbered)
@@ -168,10 +178,11 @@ def make_read_file_spec(
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of lines to return (default 500)",
+                    "description": "Maximum number of lines to return (default: entire file)",
                 },
             },
             "required": ["path"],
         },
         handler=handler,
+        self_truncating=True,
     )
