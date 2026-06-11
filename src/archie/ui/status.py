@@ -75,7 +75,8 @@ class StatusBar(Widget):
 
     def refresh_branch(self) -> None:
         """Re-read the git branch (e.g. after a checkout via shell tool)."""
-        # git_branch is set by the app from _detect_git_branch; this triggers display update
+        # Branch is read once up front and refreshed at each turn's end (a turn
+        # may have committed/checked out). Read directly from .git/HEAD below.
         self._refresh_display()
 
     # --- Watchers: any reactive change triggers a display refresh ---

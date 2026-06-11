@@ -409,6 +409,7 @@ class ArchieApp(App):
         self._agent_generation += 1
         self.sandbox.destroy()
         self._build_stack()
+        self._turn_count = 0
 
         conv = self.query_one("#conversation", Conversation)
         conv.remove_children()
