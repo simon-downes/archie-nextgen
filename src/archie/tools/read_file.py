@@ -29,10 +29,7 @@ from archie.tools import ToolSpec, tool_error, tool_result, validate_path
 # Lines longer than this are usually minified code, data, or generated content
 # that isn't useful to read in full. We truncate to save context budget.
 _LINE_LENGTH_CAP = 500
-
-# Default number of lines to return per call.
-# 500 lines is roughly 15-25KB of typical code — enough to understand a module
-# but not so much that we blow the context budget on a single read.
+_CHAR_BUDGET = 8000  # ~130-160 lines of typical code
 
 
 def make_read_file_spec(
@@ -66,7 +63,7 @@ def make_read_file_spec(
         """
         path_str = params.get("path", "")
         offset = params.get("offset", 0)
-        limit = params.get("limit", None)  # None = read entire file; truncate_result caps output
+        limit = params.get("limit", None)  # None = read entire file up to char budget
 
         # --- Security: enforce path allowlist ---
         try:
@@ -127,7 +124,7 @@ def make_read_file_spec(
         # Stop emitting lines when approaching the budget so the pagination hint
         # is accurate (no silent truncation downstream). The budget is generous
         # enough for most files; only large ones get split.
-        char_budget = 8000  # ~2000 lines of typical code
+        char_budget = _CHAR_BUDGET
         numbered = []
         chars_used = 0
         budget_hit = False

@@ -297,3 +297,146 @@ class TestReadFileMtimeDedup:
         result = spec.handler({"path": str(test_file), "offset": 1, "limit": 500})
         assert "unchanged" not in result.lower()
         assert "line2" in result
+
+
+class TestReadFileBudget:
+    """Tests for char-budget pagination accuracy."""
+
+    def setup_method(self, tmp_path=None):
+        pass
+
+    def test_budget_hit_gives_accurate_offset_hint(self, tmp_path):
+        """Following the pagination hint produces contiguous lines with no gap."""
+        from archie.tools.read_file import make_read_file_spec
+
+        # Create a file large enough to exceed the 8KB budget
+        lines = [f"line {i}: {'x' * 50}" for i in range(300)]
+        big_file = tmp_path / "big.py"
+        big_file.write_text("\n".join(lines))
+
+        spec = make_read_file_spec(tmp_path, [])
+
+        # First read
+        result1 = spec.handler({"path": "big.py"})
+        assert "Use offset=" in result1
+        # Extract the suggested offset
+        offset_line = [x for x in result1.split("\n") if "Use offset=" in x][0]
+        next_offset = int(offset_line.split("offset=")[1].split(" ")[0])
+
+        # Second read following the hint
+        result2 = spec.handler({"path": "big.py", "offset": next_offset})
+
+        # First line of result2 should be exactly next_offset + 1 (1-based display)
+        content_lines = [x for x in result2.split("\n") if "|" in x]
+        first_line_num = int(content_lines[0].split("|")[0].strip())
+        assert first_line_num == next_offset + 1
+
+    def test_small_file_no_pagination(self, tmp_path):
+        """A small file fits entirely within budget — no pagination hint."""
+        from archie.tools.read_file import make_read_file_spec
+
+        small_file = tmp_path / "small.py"
+        small_file.write_text("hello\nworld\n")
+
+        spec = make_read_file_spec(tmp_path, [])
+        result = spec.handler({"path": "small.py"})
+        assert "Use offset=" not in result
+        assert "2 lines" in result
+
+
+class TestSelfTruncating:
+    """Tests for self_truncating ToolSpec behaviour in the agent loop."""
+
+    def test_self_truncating_tool_skips_truncation(self, tmp_path):
+        """A self_truncating tool's result >4KB is not clipped by the agent."""
+        from unittest.mock import MagicMock
+
+        from archie.agent import AgentLoop
+        from archie.llm.bedrock import Done, ToolUseEvent, Usage
+        from archie.models import ModelInfo
+        from archie.session import Session
+        from archie.tools import ToolRegistry, ToolSpec
+
+        big_output = "x" * 6000  # > 4KB default cap
+
+        reg = ToolRegistry()
+        reg.register(
+            ToolSpec(
+                "big", "big tool", {"type": "object"}, lambda p: big_output, self_truncating=True
+            )
+        )
+
+        model = ModelInfo(
+            name="T", max_context_tokens=100_000, input_price_per_m=1.0, output_price_per_m=1.0
+        )
+        session = Session(model_id="test", model_info=model)
+        session._log_path = tmp_path / "test.jsonl"
+
+        llm = MagicMock()
+        llm.stream = MagicMock(
+            side_effect=[
+                iter(
+                    [
+                        ToolUseEvent(tool_use_id="t1", name="big", input={}),
+                        Usage(input_tokens=10, output_tokens=5),
+                        Done(stop_reason="tool_use"),
+                    ]
+                ),
+                iter([Done(stop_reason="end_turn")]),
+            ]
+        )
+
+        events = []
+        agent = AgentLoop(llm, session, reg, "system", events.append)
+        agent.run_turn("go")
+
+        # Find the tool result in session — should be full 6000 chars, not truncated
+        from archie.types import ToolResultBlock
+
+        results = [b for t in session.turns for b in t.content if isinstance(b, ToolResultBlock)]
+        assert len(results[0].content) == 6000
+
+    def test_default_tool_still_truncated(self, tmp_path):
+        """A normal tool's result >4KB is truncated."""
+        from unittest.mock import MagicMock
+
+        from archie.agent import AgentLoop
+        from archie.llm.bedrock import Done, ToolUseEvent, Usage
+        from archie.models import ModelInfo
+        from archie.session import Session
+        from archie.tools import ToolRegistry, ToolSpec
+
+        big_output = "x" * 6000
+
+        reg = ToolRegistry()
+        reg.register(ToolSpec("normal", "normal tool", {"type": "object"}, lambda p: big_output))
+
+        model = ModelInfo(
+            name="T", max_context_tokens=100_000, input_price_per_m=1.0, output_price_per_m=1.0
+        )
+        session = Session(model_id="test", model_info=model)
+        session._log_path = tmp_path / "test.jsonl"
+
+        llm = MagicMock()
+        llm.stream = MagicMock(
+            side_effect=[
+                iter(
+                    [
+                        ToolUseEvent(tool_use_id="t1", name="normal", input={}),
+                        Usage(input_tokens=10, output_tokens=5),
+                        Done(stop_reason="tool_use"),
+                    ]
+                ),
+                iter([Done(stop_reason="end_turn")]),
+            ]
+        )
+
+        events = []
+        agent = AgentLoop(llm, session, reg, "system", events.append)
+        agent.run_turn("go")
+
+        from archie.types import ToolResultBlock
+
+        results = [b for t in session.turns for b in t.content if isinstance(b, ToolResultBlock)]
+        assert len(results[0].content) < 6000
+        assert "truncated" in results[0].content
