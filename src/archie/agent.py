@@ -301,47 +301,58 @@ class AgentLoop:
         )
 
     def _execute_tools(self, tool_blocks: list[ToolUseBlock], turn_log: TurnLog) -> None:
-        """Run tool calls, committing each result to session immediately for interrupt safety."""
-        for block in tool_blocks:
-            self._check_interrupt()
-            self._emit(
-                ToolStarted(tool_use_id=block.tool_use_id, name=block.name, input=block.input)
-            )
+        """Run tool calls, batching results into a single user turn.
 
-            content, is_error = self._run_one_tool(block.name, block.input)
-            summary = summarise_tool_output(block.name, block.input, content, is_error)
-            self.artifact_store.put(block.tool_use_id, content, summary)
+        Bedrock requires all toolResult blocks for a given assistant turn to be in
+        one user message. We collect results and commit them together at the end.
+        On interrupt, we commit whatever's been collected so far before propagating.
+        """
+        results: list[ToolResultBlock] = []
+        try:
+            for block in tool_blocks:
+                self._check_interrupt()
+                self._emit(
+                    ToolStarted(tool_use_id=block.tool_use_id, name=block.name, input=block.input)
+                )
 
-            turn_log.tools.append(
-                {
-                    "id": block.tool_use_id,
-                    "name": block.name,
-                    "input": block.input,
-                    "success": not is_error,
-                    "summary": summary,
-                    **({"error": content.split("\n")[0][:200]} if is_error else {}),
-                }
-            )
+                content, is_error = self._run_one_tool(block.name, block.input)
+                summary = summarise_tool_output(block.name, block.input, content, is_error)
+                self.artifact_store.put(block.tool_use_id, content, summary)
 
-            content = truncate_result(content)
-            self.session.add_turn(
-                "user",
-                [
+                turn_log.tools.append(
+                    {
+                        "id": block.tool_use_id,
+                        "name": block.name,
+                        "input": block.input,
+                        "success": not is_error,
+                        "summary": summary,
+                        **({"error": content.split("\n")[0][:200]} if is_error else {}),
+                    }
+                )
+
+                content = truncate_result(content)
+                results.append(
                     ToolResultBlock(
                         tool_use_id=block.tool_use_id, content=content, is_error=is_error
                     )
-                ],
-            )
-
-            self._emit(
-                ToolFinished(
-                    tool_use_id=block.tool_use_id,
-                    name=block.name,
-                    summary=summary,
-                    is_error=is_error,
                 )
-            )
-            self._check_interrupt()
+
+                self._emit(
+                    ToolFinished(
+                        tool_use_id=block.tool_use_id,
+                        name=block.name,
+                        summary=summary,
+                        is_error=is_error,
+                    )
+                )
+                self._check_interrupt()
+        except _InterruptedError:
+            # Commit completed results before propagating
+            if results:
+                self.session.add_turn("user", results)
+            raise
+
+        self.session.add_turn("user", results)
 
     def _run_one_tool(self, name: str, args: dict) -> tuple[str, bool]:
         """Execute a single tool. Returns (result_content, is_error)."""
