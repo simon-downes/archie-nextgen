@@ -294,8 +294,8 @@ class ArchieApp(App):
         status.project_name = self.project_dir.name
         status.git_branch = self._git_branch
         status.model_name = self.model_info.name
-        status.turn_input = self.session.total_input_tokens
-        status.turn_output = self.session.total_output_tokens
+        status.session_input = self.session.total_input_tokens
+        status.session_output = self.session.total_output_tokens
         status.cache_read = self.session.total_cache_read_tokens
         status.cache_write = self.session.total_cache_write_tokens
         status.context_pct = self.session.context_pct
@@ -305,8 +305,8 @@ class ArchieApp(App):
     def _update_status_from_event(self, event: UsageUpdated) -> None:
         """Update status bar from agent's UsageUpdated event."""
         status = self.query_one("#status", StatusBar)
-        status.turn_input = event.input_tokens
-        status.turn_output = event.output_tokens
+        status.session_input = event.input_tokens
+        status.session_output = event.output_tokens
         status.cache_read = event.cache_read_tokens
         status.cache_write = event.cache_write_tokens
         status.cost = event.cost
@@ -366,7 +366,12 @@ class ArchieApp(App):
         seeded_mtime = Path(tmpfile).stat().st_mtime
 
         with self.suspend():
-            subprocess.run([editor, tmpfile])
+            try:
+                subprocess.run([editor, tmpfile])
+            except FileNotFoundError:
+                Path(tmpfile).unlink(missing_ok=True)
+                self._show_error(f"Editor not found: {editor}")
+                return
 
         path = Path(tmpfile)
         saved = path.stat().st_mtime != seeded_mtime

@@ -39,10 +39,10 @@ def _detect_git_branch(project_dir: Path) -> str:
 class StatusBar(Widget):
     """Two-section status bar: left (metrics) and right (project info)."""
 
-    # Left section
+    # Left section — session lifetime totals
     model_name: reactive[str] = reactive("—")
-    turn_input: reactive[int] = reactive(0)
-    turn_output: reactive[int] = reactive(0)
+    session_input: reactive[int] = reactive(0)
+    session_output: reactive[int] = reactive(0)
     cache_read: reactive[int] = reactive(0)
     cache_write: reactive[int] = reactive(0)
     context_pct: reactive[float] = reactive(0.0)
@@ -83,10 +83,10 @@ class StatusBar(Widget):
     def _watch_model_name(self) -> None:
         self._refresh_display()
 
-    def _watch_turn_input(self) -> None:
+    def _watch_session_input(self) -> None:
         self._refresh_display()
 
-    def _watch_turn_output(self) -> None:
+    def _watch_session_output(self) -> None:
         self._refresh_display()
 
     def _watch_cache_read(self) -> None:
@@ -116,7 +116,7 @@ class StatusBar(Widget):
             return
 
         # Output: show ~estimate while streaming, real value otherwise
-        out_display = f"~{self._output_estimate}" if self._estimating else str(self.turn_output)
+        out_display = f"~{self._output_estimate}" if self._estimating else str(self.session_output)
 
         # Context percentage with warning highlight
         ctx = (
@@ -127,7 +127,7 @@ class StatusBar(Widget):
 
         left.update(
             f" {self.model_name}"
-            f" │ in:{_fmt(self.turn_input)}/{_fmt(self.cache_read)}/{_fmt(self.cache_write)}"
+            f" │ in:{_fmt(self.session_input)}/{_fmt(self.cache_read)}/{_fmt(self.cache_write)}"
             f" out:{out_display}"
             f" │ {ctx}"
             f" │ ${self.cost:.4f}"

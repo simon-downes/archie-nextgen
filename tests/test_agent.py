@@ -276,3 +276,32 @@ class TestErrorHandling:
         finished = [e for e in events if isinstance(e, ToolFinished)]
         assert finished[0].is_error is True
         assert events[-1] == TurnComplete(stop_reason="end_turn")
+
+
+class TestCacheFieldThreading:
+    """Verify cache tokens flow from LLM Usage → session → UsageUpdated event."""
+
+    def test_cache_tokens_in_usage_event(self, session, registry):
+        llm = _mock_llm(
+            [
+                LlmTextDelta(text="Hi"),
+                Usage(
+                    input_tokens=10,
+                    output_tokens=5,
+                    cache_read_input_tokens=80,
+                    cache_write_input_tokens=20,
+                ),
+                Done(stop_reason="end_turn"),
+            ]
+        )
+        events = []
+        agent = AgentLoop(llm, session, registry, "system", events.append)
+
+        agent.run_turn("Hello")
+
+        usage_events = [e for e in events if isinstance(e, UsageUpdated)]
+        assert len(usage_events) == 1
+        assert usage_events[0].cache_read_tokens == 80
+        assert usage_events[0].cache_write_tokens == 20
+        assert session.total_cache_read_tokens == 80
+        assert session.total_cache_write_tokens == 20

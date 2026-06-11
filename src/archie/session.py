@@ -74,6 +74,8 @@ class TurnLog:
     tools: list[dict] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     model: str = ""
     interrupted: bool = False
 
@@ -202,7 +204,13 @@ class Session:
         """
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        cost = calculate_cost(self.model_info, turn_log.input_tokens, turn_log.output_tokens)
+        cost = calculate_cost(
+            self.model_info,
+            turn_log.input_tokens,
+            turn_log.output_tokens,
+            turn_log.cache_read_tokens,
+            turn_log.cache_write_tokens,
+        )
 
         entry = {
             "id": str(ULID()),

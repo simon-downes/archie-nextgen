@@ -253,3 +253,66 @@ class TestCalculateCost:
             cache_write_tokens=1_000_000,
         )
         assert cost == 1.0 + 2.0 + 0.1 + 1.5
+
+
+class TestSessionCacheAccumulation:
+    """Tests that session tracks cache tokens correctly."""
+
+    def test_add_turn_accumulates_cache_tokens(self, tmp_path):
+        from archie.models import ModelInfo
+
+        model = ModelInfo(
+            name="Test",
+            max_context_tokens=100_000,
+            input_price_per_m=1.0,
+            output_price_per_m=1.0,
+            cache_read_price_per_m=0.1,
+            cache_write_price_per_m=1.5,
+        )
+        s = Session(model_id="test", model_info=model)
+        s._log_path = tmp_path / "test.jsonl"
+
+        s.add_turn(
+            "assistant",
+            "hi",
+            input_tokens=100,
+            output_tokens=50,
+            cache_read_tokens=200,
+            cache_write_tokens=30,
+        )
+        s.add_turn(
+            "assistant",
+            "bye",
+            input_tokens=80,
+            output_tokens=40,
+            cache_read_tokens=150,
+            cache_write_tokens=20,
+        )
+
+        assert s.total_cache_read_tokens == 350
+        assert s.total_cache_write_tokens == 50
+
+
+class TestDetectGitBranch:
+    """Tests for .git/HEAD branch reading."""
+
+    def test_reads_branch_from_head(self, tmp_path):
+        from archie.ui.status import _detect_git_branch
+
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("ref: refs/heads/feat/my-branch\n")
+        assert _detect_git_branch(tmp_path) == "feat/my-branch"
+
+    def test_detached_head_returns_short_hash(self, tmp_path):
+        from archie.ui.status import _detect_git_branch
+
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("abc123def456\n")
+        assert _detect_git_branch(tmp_path) == "abc123de"
+
+    def test_no_git_dir_returns_dash(self, tmp_path):
+        from archie.ui.status import _detect_git_branch
+
+        assert _detect_git_branch(tmp_path) == "—"
