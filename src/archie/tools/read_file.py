@@ -9,7 +9,7 @@ This is one of the most-used tools. It reads files natively in Python
 
 Features:
 - Line-numbered output (e.g. "   42|content") for easy reference
-- Pagination via offset/limit params (default limit=500 lines)
+- Pagination via offset/limit params (reads entire file by default)
 - Binary file detection (null bytes in first 8KB)
 - Line-length cap (500 chars per line) to prevent context bloat
 - Pagination hint when truncated ("Use offset=N to continue reading")
@@ -33,7 +33,6 @@ _LINE_LENGTH_CAP = 500
 # Default number of lines to return per call.
 # 500 lines is roughly 15-25KB of typical code — enough to understand a module
 # but not so much that we blow the context budget on a single read.
-_DEFAULT_LIMIT = 500
 
 
 def make_read_file_spec(
@@ -67,7 +66,7 @@ def make_read_file_spec(
         """
         path_str = params.get("path", "")
         offset = params.get("offset", 0)
-        limit = params.get("limit", _DEFAULT_LIMIT)
+        limit = params.get("limit", None)  # None = read entire file; truncate_result caps output
 
         # --- Security: enforce path allowlist ---
         try:
@@ -117,8 +116,12 @@ def make_read_file_spec(
         # --- Apply pagination ---
         # offset is 0-based (line 0 = first line of file).
         # The model can request arbitrary windows into the file.
-        selected = lines[offset : offset + limit]
-        truncated = (offset + limit) < total_lines
+        if limit is not None:
+            selected = lines[offset : offset + limit]
+            truncated = (offset + limit) < total_lines
+        else:
+            selected = lines[offset:]
+            truncated = False
 
         # --- Format with line numbers + length cap ---
         numbered = []
@@ -168,7 +171,7 @@ def make_read_file_spec(
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of lines to return (default 500)",
+                    "description": "Maximum number of lines to return (default: entire file)",
                 },
             },
             "required": ["path"],
