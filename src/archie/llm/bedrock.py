@@ -26,6 +26,7 @@ from collections.abc import Generator
 from dataclasses import dataclass
 
 import boto3
+from botocore.config import Config
 
 from archie.session import Turn
 from archie.types import TextBlock, ToolResultBlock, ToolUseBlock
@@ -142,11 +143,16 @@ class BedrockClient:
     - Failing fast on validation errors (context too large)
     """
 
-    def __init__(self, model_id: str, region: str):
+    def __init__(self, model_id: str, region: str, max_output_tokens: int = 16_384):
         self.model_id = model_id
+        self.max_output_tokens = max_output_tokens
         # boto3 client is created once and reused for all requests.
         # It handles connection pooling and credential refresh internally.
-        self.client = boto3.client("bedrock-runtime", region_name=region)
+        self.client = boto3.client(
+            "bedrock-runtime",
+            region_name=region,
+            config=Config(read_timeout=300, retries={"max_attempts": 0}),
+        )
         # Prompt caching: try once, disable if unsupported
         self._cache_supported: bool = True
 
@@ -186,6 +192,7 @@ class BedrockClient:
             "modelId": self.model_id,
             "messages": bedrock_messages,
             "system": system_blocks,
+            "inferenceConfig": {"maxTokens": self.max_output_tokens},
         }
 
         # Add tool configuration if tools are available

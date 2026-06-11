@@ -65,8 +65,6 @@ class StatusBar(Widget):
     model_name: reactive[str] = reactive("—")
     turn_input: reactive[int] = reactive(0)
     turn_output: reactive[int] = reactive(0)
-    total_input: reactive[int] = reactive(0)
-    total_output: reactive[int] = reactive(0)
     context_pct: reactive[float] = reactive(0.0)
     cost: reactive[float] = reactive(0.0)
     warning: reactive[bool] = reactive(False)
@@ -90,12 +88,6 @@ class StatusBar(Widget):
         self._update_left()
 
     def _watch_turn_output(self) -> None:
-        self._update_left()
-
-    def _watch_total_input(self) -> None:
-        self._update_left()
-
-    def _watch_total_output(self) -> None:
         self._update_left()
 
     def _watch_context_pct(self) -> None:

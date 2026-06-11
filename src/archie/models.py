@@ -31,6 +31,7 @@ class ModelInfo:
     input_price_per_m: float
     output_price_per_m: float
     context_warning_threshold: float = 0.8
+    max_output_tokens: int = 16_384
 
 
 # Registry of known models keyed by their Bedrock inference profile ID.

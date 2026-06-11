@@ -128,7 +128,11 @@ class ArchieApp(App):
         # Load config and set up dependencies
         self.config = load_config()
         self.model_info = get_model_info(self.config.model)
-        self.llm = BedrockClient(model_id=self.config.model, region=self.config.region)
+        self.llm = BedrockClient(
+            model_id=self.config.model,
+            region=self.config.region,
+            max_output_tokens=self.model_info.max_output_tokens,
+        )
 
         # detect_project_dir finds the project root (e.g. ~/dev/myproject)
         # even if archie was launched from a subdirectory within it.
@@ -330,6 +334,10 @@ class ArchieApp(App):
         """UI thread: a tool finished. Update the pending block with result."""
         conv = self.query_one("#conversation", Conversation)
         conv.update_tool_result(event.tool_use_id, event.content, event.is_error)
+        # Re-mount throbber — engine will call LLM again after processing the result
+        self._throbber = Throbber()
+        conv.mount(self._throbber)
+        conv.scroll_end(animate=False)
 
     def on_stream_complete(self, event: StreamComplete) -> None:
         """UI thread: engine finished processing. Finalise everything."""
@@ -355,7 +363,7 @@ class ArchieApp(App):
             self.engine.current_turn_log = None
 
         # Update status bar with token counts from the full engine turn
-        self._update_status(event.input_tokens, event.output_tokens)
+        self._update_status()
 
         # Re-enable input and give it focus
         self._stream_worker = None
@@ -415,16 +423,14 @@ class ArchieApp(App):
         conv = self.query_one("#conversation", Conversation)
         conv.add_error(message)
 
-    def _update_status(self, turn_input: int = 0, turn_output: int = 0) -> None:
+    def _update_status(self) -> None:
         """Push current stats to the status bar widget."""
         status = self.query_one("#status", StatusBar)
         status.project_name = self.project_dir.name
         status.git_branch = self._git_branch
         status.model_name = self.model_info.name
-        status.turn_input = turn_input
-        status.turn_output = turn_output
-        status.total_input = self.session.total_input_tokens
-        status.total_output = self.session.total_output_tokens
+        status.turn_input = self.session.total_input_tokens
+        status.turn_output = self.session.total_output_tokens
         status.context_pct = self.session.context_pct
         status.cost = self.session.total_cost
         status.warning = self.session.context_warning
@@ -560,6 +566,10 @@ class ArchieApp(App):
             tools=self.config.tools,
             sandbox=self.config.sandbox,
         )
-        self.llm = BedrockClient(model_id=model_id, region=self.config.region)
+        self.llm = BedrockClient(
+            model_id=model_id,
+            region=self.config.region,
+            max_output_tokens=self.model_info.max_output_tokens,
+        )
         self.action_new_session()
         self.notify(f"Switched to {self.model_info.name}")
