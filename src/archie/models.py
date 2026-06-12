@@ -73,7 +73,7 @@ MODELS: dict[str, ModelInfo] = {
         cache_read_price_per_m=1.50,
         cache_write_price_per_m=18.75,
     ),
-    "eu.anthropic.claude-opus-4-8-v1": ModelInfo(
+    "eu.anthropic.claude-opus-4-8": ModelInfo(
         name="Claude Opus 4.8",
         max_context_tokens=1_000_000,
         input_price_per_m=15.0,
