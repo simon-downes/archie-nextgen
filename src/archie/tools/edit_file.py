@@ -24,6 +24,7 @@ def make_edit_file_spec(
     cwd: Path,
     allowed_directories: list[Path],
     mtime_cache: dict[tuple[str, int, int], tuple[float, str]],
+    pre_content_stash: dict[str, str] | None = None,
 ) -> ToolSpec:
     """Create an edit_file ToolSpec bound to path constraints.
 
@@ -31,6 +32,8 @@ def make_edit_file_spec(
         cwd: Working directory for resolving relative paths.
         allowed_directories: Additional directories the tool can edit.
         mtime_cache: Shared cache with read_file — invalidated on edit.
+        pre_content_stash: Shared dict for UI diffs — edit stashes original
+            content here keyed by tool_use_id before applying changes.
     """
 
     def handler(params: dict) -> str:
@@ -52,6 +55,14 @@ def make_edit_file_spec(
             content = resolved.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
             return tool_error(f"Cannot read file: {e}")
+
+        # Stash pre-edit content for UI diff generation
+        if pre_content_stash is not None:
+            from archie.tools import current_tool_use_id
+
+            tid = current_tool_use_id.get()
+            if tid:
+                pre_content_stash[tid] = content
 
         # Apply edits sequentially — each edit operates on the result of the previous.
         # If any edit fails, we bail out without writing (atomic guarantee).

@@ -120,14 +120,17 @@ class StreamingMessage(Widget):
     StreamingMessage {
         padding: 1 2;
         margin: 1 0;
+        height: auto;
     }
     StreamingMessage > .header {
         color: $success;
         text-style: bold;
+        height: auto;
     }
     StreamingMessage > .content {
         margin: 0;
         padding: 0;
+        height: auto;
     }
     """
 
@@ -177,190 +180,81 @@ class ErrorMessage(Static):
         return self._content
 
 
-class ToolCallMessage(Widget):
-    """A collapsible tool call block with a clickable header and hidden body.
+class IterationBlock(Widget):
+    """A static block showing tool call summaries for one iteration.
 
-    The header is always visible and shows the tool name, short args summary,
-    and a status indicator (⌛ pending, ✔ success, ✘ error). The body contains
-    the full arguments and result content, hidden by default to reduce noise
-    in tool-heavy sessions.
+    One iteration = one LLM response that triggered N tool calls. All N tools
+    are displayed as lines within this single block. Lines stream in as tools
+    start (pending ○) and complete (● green/red).
 
-    Lifecycle:
-    1. Mounted at ToolStart with pending state (⌛) — only header visible
-    2. Updated at ToolResult with success/error state and result content
-    3. Auto-expands on error so failures are always visible
-
-    Toggle expand/collapse:
-    - Click the header
-    - Press Enter or x when the block has focus
-
-    The widget ID is set to the tool_use_id so it can be found and updated
-    when the result arrives (Conversation.update_tool_result uses query_one).
+    This is a static display block like UserMessage/AssistantMessage — no
+    collapse, no expand, no interactivity beyond focus for copy.
     """
 
-    # Allow this block to receive focus for keyboard navigation and block copy
     can_focus = True
 
-    # Keybindings for toggling expand/collapse when focused
-    BINDINGS = [
-        ("enter", "toggle_expand", "Toggle"),
-        ("x", "toggle_expand", "Toggle"),
-    ]
-
     DEFAULT_CSS = """
-    ToolCallMessage {
-        padding: 1 2;
-        margin: 1 0;
-        background: $surface;
+    IterationBlock {
+        padding: 0 2;
+        margin: 0 0;
         height: auto;
     }
-    ToolCallMessage > .tool-header {
-        color: $text-muted;
-        text-style: bold;
+    IterationBlock > Static {
         height: auto;
-    }
-    ToolCallMessage > .tool-body {
-        height: auto;
-        margin: 0 0 0 2;
-        display: none;
-    }
-    ToolCallMessage > .tool-body.expanded {
-        display: block;
-    }
-    ToolCallMessage > .tool-body > .tool-args {
-        color: $text-muted;
-        height: auto;
-    }
-    ToolCallMessage > .tool-body > .tool-result {
-        color: $text-muted;
-        height: auto;
-        margin: 1 0 0 0;
-        max-height: 20;
-        overflow-y: auto;
-    }
-    ToolCallMessage > .tool-body > .tool-error {
-        color: $error;
-        height: auto;
-        margin: 1 0 0 0;
+        margin: 0;
+        padding: 0;
     }
     """
 
-    def __init__(
+    def __init__(self) -> None:
+        super().__init__()
+        self._tool_widgets: dict[str, Static] = {}
+        self._summaries: list[str] = []
+
+    def add_pending(self, tool_use_id: str, ui_summary: str) -> None:
+        """Add a pending tool line (○ indicator in primary colour).
+
+        ui_summary is pre-formatted Rich markup from format_tool_pending.
+        """
+        text = f"[bold #0178d4]○[/] {ui_summary}"
+        widget = Static(text, markup=True)
+        self._tool_widgets[tool_use_id] = widget
+        self.mount(widget)
+
+    def complete_tool(
         self,
-        name: str,
-        args: dict,
-        result: str = "",
-        is_error: bool = False,
-        pending: bool = False,
-        widget_id: str | None = None,
+        tool_use_id: str,
+        ui_summary: str,
+        is_error: bool,
+        ui_detail: list[str] | None = None,
     ) -> None:
-        # Use tool_use_id as widget ID so we can find this widget later
-        super().__init__(id=widget_id)
-        self._name = name
-        self._args = args
-        self._result = result
-        self._is_error = is_error
-        self._pending = pending
-        self._expanded = False
+        """Replace a pending line with the completed summary.
 
-    def compose(self):
-        yield Static(self._build_header_text(), classes="tool-header")
-        # Body container — hidden by default via CSS (display: none)
-        body = Static("", classes="tool-body", markup=False)
-        body.update(self._build_body_text())
-        yield body
+        ui_summary is pre-formatted Rich markup from format_tool_complete.
+        ui_detail lines are pre-formatted Rich markup from format_tool_detail.
+        """
+        colour = "red" if is_error else "green"
+        text = f"[bold {colour}]●[/] {ui_summary}"
+        if ui_detail:
+            text += "\n" + "\n".join(ui_detail)
 
-    def _build_header_text(self) -> str:
-        """Build the header line: ▶/▼ 🔧 tool_name(short_args) status_icon."""
-        import json
-
-        # Collapse/expand indicator
-        arrow = "▼" if self._expanded else "▶"
-        # Status indicator
-        if self._pending:
-            status = "⌛"
-        elif self._is_error:
-            status = "✘"
+        self._summaries.append(ui_summary)
+        widget = self._tool_widgets.get(tool_use_id)
+        if widget:
+            widget.update(text)
         else:
-            status = "✔"
-        # Short args summary — just the first ~80 chars of compact JSON
-        args_str = json.dumps(self._args, indent=None)
-        if len(args_str) > 80:
-            args_str = args_str[:80] + "…"
-        return f"{arrow} 🔧 {self._name}({args_str}) {status}"
-
-    def _build_body_text(self) -> str:
-        """Build the body content: full args + result (if available)."""
-        import json
-
-        parts = []
-        # Full arguments
-        args_str = json.dumps(self._args, indent=2)
-        parts.append(args_str)
-        # Result content (only present after ToolResult arrives)
-        if self._result:
-            parts.append("─" * 40)
-            display_result = self._result[:2000]
-            if len(self._result) > 2000:
-                display_result += "\n..."
-            parts.append(display_result)
-        return "\n".join(parts)
-
-    def update_result(self, result: str, is_error: bool) -> None:
-        """Called when ToolResult arrives — update status and content.
-
-        Auto-expands the block on error so failures are always visible.
-        """
-        self._result = result
-        self._is_error = is_error
-        self._pending = False
-        # Auto-expand on error — failed tools should always show their output
-        if is_error:
-            self._expanded = True
-        self._refresh_display()
-
-    def action_toggle_expand(self) -> None:
-        """Toggle the body visibility (bound to Enter and x keys)."""
-        self._expanded = not self._expanded
-        self._refresh_display()
-
-    def on_click(self, event) -> None:
-        """Click on the header toggles expand/collapse.
-
-        We check if the click target is the header widget — clicking in the
-        body area (to read/select result text) should not collapse the block.
-        """
-        # Only toggle if clicking the header, not the body content
-        try:
-            header = self.query_one(".tool-header", Static)
-            if event.widget is header:
-                self._expanded = not self._expanded
-                self._refresh_display()
-        except Exception:  # noqa: BLE001
-            pass
-
-    def _refresh_display(self) -> None:
-        """Re-render header text and toggle body visibility."""
-        try:
-            header = self.query_one(".tool-header", Static)
-            header.update(self._build_header_text())
-            body = self.query_one(".tool-body", Static)
-            body.update(self._build_body_text())
-            # Toggle the 'expanded' CSS class to show/hide body
-            body.set_class(self._expanded, "expanded")
-        except Exception:  # noqa: BLE001 — widget may not be mounted yet
-            pass
+            w = Static(text, markup=True)
+            self._tool_widgets[tool_use_id] = w
+            self.mount(w)
 
     def get_copy_text(self) -> str:
-        """Return formatted tool name + args + result for clipboard copy."""
-        import json
+        """Return all tool summaries as plain text for clipboard."""
+        return "\n".join(f"● {s}" for s in self._summaries)
 
-        parts = [f"🔧 {self._name}"]
-        parts.append(json.dumps(self._args, indent=2))
-        if self._result:
-            parts.append("─" * 40)
-            parts.append(self._result)
-        return "\n".join(parts)
+
+def _escape(text: str) -> str:
+    """Escape Rich markup characters in text."""
+    return text.replace("[", r"\[").replace("]", r"\]")
 
 
 class ShellOutput(Widget):
@@ -460,31 +354,37 @@ class Conversation(VerticalScroll):
         self.scroll_end(animate=False)
 
     def add_tool_call(self, name: str, args: dict, result: str, is_error: bool) -> None:
-        """Add a complete tool call block showing name, args, and result.
+        """Add a complete tool call to the current iteration block (used for session replay)."""
+        pass  # No session replay in this app
 
-        Used for session replay where we have the full tool call already.
-        """
-        self.mount(ToolCallMessage(name, args, result, is_error))
+    def begin_iteration(self) -> None:
+        """Start a new iteration block for tool calls."""
+        self._current_iteration = IterationBlock()
+        self.mount(self._current_iteration)
         self.scroll_end(animate=False)
 
-    def mount_tool_pending(self, tool_use_id: str, name: str, args: dict) -> None:
-        """Mount a tool call block in pending state (⌛) when ToolStart arrives.
-
-        Uses tool_use_id as the widget ID so we can find it later at ToolResult.
-        """
-        self.mount(ToolCallMessage(name, args, pending=True, widget_id=tool_use_id))
+    def add_tool_pending(self, tool_use_id: str, ui_summary: str) -> None:
+        """Add a pending tool line to the current iteration block."""
+        if not hasattr(self, "_current_iteration") or self._current_iteration is None:
+            self.begin_iteration()
+        self._current_iteration.add_pending(tool_use_id, ui_summary)
         self.scroll_end(animate=False)
 
-    def update_tool_result(self, tool_use_id: str, result: str, is_error: bool) -> None:
-        """Update a pending tool call block with its result (✔ or ✘).
+    def complete_tool(
+        self,
+        tool_use_id: str,
+        ui_summary: str,
+        is_error: bool,
+        ui_detail: list[str] | None = None,
+    ) -> None:
+        """Complete a tool in the current iteration block."""
+        if hasattr(self, "_current_iteration") and self._current_iteration is not None:
+            self._current_iteration.complete_tool(tool_use_id, ui_summary, is_error, ui_detail)
+            self.scroll_end(animate=False)
 
-        Finds the ToolCallMessage by its widget ID (the tool_use_id).
-        """
-        try:
-            widget = self.query_one(f"#{tool_use_id}", ToolCallMessage)
-            widget.update_result(result, is_error)
-        except Exception:  # noqa: BLE001 — widget may have been removed
-            pass
+    def end_iteration(self) -> None:
+        """Mark the current iteration as done."""
+        self._current_iteration = None
 
     def add_shell_output(self, command: str, output: str, exit_code: int) -> None:
         """Add a user shell command result (from ! prefix).
@@ -505,11 +405,10 @@ class Conversation(VerticalScroll):
     def finalise_streaming(self, streaming: StreamingMessage) -> None:
         """Replace a streaming widget with a finalised Markdown version.
 
-        This is the plain-text → Markdown transition. The streaming widget
-        is removed and a new AssistantMessage (with full Markdown rendering)
-        takes its place.
+        Uses mount(before=) + remove() to avoid a flash from the layout gap
+        that would occur if we removed first then mounted.
         """
         final = AssistantMessage(streaming.text)
+        self.mount(final, before=streaming)
         streaming.remove()
-        self.mount(final)
         self.scroll_end(animate=False)

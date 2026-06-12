@@ -138,6 +138,8 @@ class ArchieApp(App):
         # Shared between read_file (populates), write/edit tools (invalidate on
         # modification) and AgentLoop (invalidates on context eviction).
         self.mtime_cache: dict[tuple[str, int, int], tuple[float, str]] = {}
+        # Shared between edit/write tools (populate) and AgentLoop (consume for UI diffs).
+        self.pre_content_stash: dict[str, str] = {}
         self.tool_registry = create_default_registry(
             self.project_dir,
             allowed,
@@ -146,6 +148,7 @@ class ArchieApp(App):
             artifact_store=self.artifact_store,
             session_id_fn=lambda: self.session.session_id,
             mtime_cache=self.mtime_cache,
+            pre_content_stash=self.pre_content_stash,
         )
         self._agent = AgentLoop(
             llm_client=self.llm,
@@ -156,6 +159,8 @@ class ArchieApp(App):
             sandbox=self.sandbox,
             artifact_store=self.artifact_store,
             mtime_cache=self.mtime_cache,
+            cwd=self.project_dir,
+            pre_content_stash=self.pre_content_stash,
         )
 
     def compose(self) -> ComposeResult:
@@ -189,6 +194,7 @@ class ArchieApp(App):
 
         if isinstance(event, TextDeltaEvent):
             self._remove_throbber()
+            conv.end_iteration()
             if self._streaming is None:
                 self._streaming = conv.begin_streaming()
             self._stream_text += event.text
@@ -200,10 +206,10 @@ class ArchieApp(App):
         elif isinstance(event, ToolStarted):
             self._remove_throbber()
             self._finalise_streaming()
-            conv.mount_tool_pending(event.tool_use_id, event.name, event.input)
+            conv.add_tool_pending(event.tool_use_id, event.ui_summary)
 
         elif isinstance(event, ToolFinished):
-            conv.update_tool_result(event.tool_use_id, event.summary, event.is_error)
+            conv.complete_tool(event.tool_use_id, event.ui_summary, event.is_error, event.ui_detail)
             self._throbber = Throbber()
             conv.mount(self._throbber)
             conv.scroll_end(animate=False)
@@ -272,6 +278,8 @@ class ArchieApp(App):
         """Single teardown path for every turn outcome."""
         self._remove_throbber()
         self._finalise_streaming()
+        conv = self.query_one("#conversation", Conversation)
+        conv.end_iteration()
         self._turn_active = False
         self._update_status()
         inp = self.query_one("#input", MessageInput)

@@ -22,6 +22,7 @@ def make_write_file_spec(
     cwd: Path,
     allowed_directories: list[Path],
     mtime_cache: dict[tuple[str, int, int], tuple[float, str]],
+    pre_content_stash: dict[str, str] | None = None,
 ) -> ToolSpec:
     """Create a write_file ToolSpec bound to path constraints.
 
@@ -29,6 +30,8 @@ def make_write_file_spec(
         cwd: Working directory for resolving relative paths.
         allowed_directories: Additional directories the tool can write to.
         mtime_cache: Shared cache with read_file — invalidated on write.
+        pre_content_stash: Shared dict for UI diffs — write stashes original
+            content here keyed by tool_use_id before overwriting.
     """
 
     def handler(params: dict) -> str:
@@ -50,6 +53,19 @@ def make_write_file_spec(
                         return tool_error(f"Refusing to overwrite binary file: {path_str}")
             except OSError:
                 pass  # Can't read existing file — proceed, let write fail naturally
+
+            # Stash pre-write content for UI diff generation (overwrites only)
+            if pre_content_stash is not None:
+                from archie.tools import current_tool_use_id
+
+                tid = current_tool_use_id.get()
+                if tid:
+                    try:
+                        pre_content_stash[tid] = resolved.read_text(
+                            encoding="utf-8", errors="replace"
+                        )
+                    except OSError:
+                        pass
 
         # Create parent dirs (common when scaffolding new packages/modules)
         resolved.parent.mkdir(parents=True, exist_ok=True)

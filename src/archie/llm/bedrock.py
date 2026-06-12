@@ -232,6 +232,7 @@ class BedrockClient:
             log,
             logging.INFO,
             "request_end",
+            model=self.model_id,
             duration_s=round(time.time() - t0, 2),
             stop_reason=stop_reason,
             input=usage.input_tokens if usage else 0,

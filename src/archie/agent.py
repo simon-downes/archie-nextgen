@@ -25,6 +25,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from archie.artifact_store import ArtifactStore
@@ -33,6 +34,7 @@ from archie.llm import TextDelta as LlmTextDelta
 from archie.logs import bind, clear, log_event
 from archie.session import Session, Turn, TurnLog, summarise_tool_output
 from archie.tools import ToolRegistry, current_tool_use_id, truncate_result
+from archie.tools.ui_summary import format_tool_complete, format_tool_detail, format_tool_pending
 from archie.types import TextBlock, ToolResultBlock, ToolUseBlock
 
 if TYPE_CHECKING:
@@ -58,6 +60,7 @@ class ToolStarted:
     tool_use_id: str
     name: str
     input: dict
+    ui_summary: str
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,8 @@ class ToolFinished:
     name: str
     summary: str
     is_error: bool
+    ui_summary: str
+    ui_detail: list[str] | None
 
 
 @dataclass(frozen=True)
@@ -163,6 +168,8 @@ class AgentLoop:
         sandbox: "Sandbox | None" = None,
         artifact_store: ArtifactStore | None = None,
         mtime_cache: dict[tuple[str, int, int], tuple[float, str]] | None = None,
+        cwd: Path | None = None,
+        pre_content_stash: dict[str, str] | None = None,
     ):
         self.llm = llm_client
         self.session = session
@@ -171,6 +178,7 @@ class AgentLoop:
         self._emit = emit
         self.sandbox = sandbox
         self.artifact_store = artifact_store or ArtifactStore()
+        self.cwd = cwd or Path.cwd()
         # Shared with read_file (see create_default_registry). Entries record
         # which tool result holds the cached content; when that result is
         # evicted from context we invalidate the entry so the next read returns
@@ -185,6 +193,9 @@ class AgentLoop:
         self._last_turn_interrupted: bool = False
         # Turn ids evicted mid-turn (see _maybe_evict_within_turn)
         self._within_turn_evicted: set[str] = set()
+        # Pre-content stash for UI diffs: tool_use_id → file content before edit/write.
+        # Populated by edit_file/write_file handlers, consumed by _execute_tools.
+        self._pre_content_stash = pre_content_stash if pre_content_stash is not None else {}
 
     def interrupt(self) -> None:
         """Request abort of the in-flight turn. Thread-safe; called from the UI thread."""
@@ -418,7 +429,12 @@ class AgentLoop:
             for block in tool_blocks:
                 self._check_interrupt("tools")
                 self._emit(
-                    ToolStarted(tool_use_id=block.tool_use_id, name=block.name, input=block.input)
+                    ToolStarted(
+                        tool_use_id=block.tool_use_id,
+                        name=block.name,
+                        input=block.input,
+                        ui_summary=format_tool_pending(block.name, block.input, self.cwd),
+                    )
                 )
                 log_event(
                     log,
@@ -474,6 +490,17 @@ class AgentLoop:
                         name=block.name,
                         summary=summary,
                         is_error=is_error,
+                        ui_summary=format_tool_complete(
+                            block.name, block.input, content, is_error, self.cwd
+                        ),
+                        ui_detail=format_tool_detail(
+                            block.name,
+                            block.input,
+                            content,
+                            is_error,
+                            self.cwd,
+                            pre_content=self._pre_content_stash.pop(block.tool_use_id, None),
+                        ),
                     )
                 )
                 self._check_interrupt("tools")

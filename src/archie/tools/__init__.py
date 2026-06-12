@@ -157,6 +157,7 @@ def create_default_registry(
     artifact_store: "ArtifactStore | None" = None,
     session_id_fn: "Callable[[], str] | None" = None,
     mtime_cache: "dict[tuple[str, int, int], tuple[float, str]] | None" = None,
+    pre_content_stash: "dict[str, str] | None" = None,
 ) -> ToolRegistry:
     """Create a ToolRegistry with the standard tool set.
 
@@ -199,8 +200,10 @@ def create_default_registry(
     registry.register(make_list_files_spec(cwd, allowed_directories))
     registry.register(make_read_file_spec(cwd, allowed_directories, mtime_cache))
     registry.register(make_search_files_spec(cwd, allowed_directories))
-    registry.register(make_write_file_spec(cwd, allowed_directories, mtime_cache))
-    registry.register(make_edit_file_spec(cwd, allowed_directories, mtime_cache))
+    registry.register(
+        make_write_file_spec(cwd, allowed_directories, mtime_cache, pre_content_stash)
+    )
+    registry.register(make_edit_file_spec(cwd, allowed_directories, mtime_cache, pre_content_stash))
     registry.register(make_code_spec(cwd, allowed_directories))
 
     # Shell tool: only registered if a sandbox is available.
