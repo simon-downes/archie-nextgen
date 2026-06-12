@@ -19,8 +19,10 @@ Translation responsibility:
   as ToolUseEvent objects.
 
 Logging:
-- Every request is logged with per-block truncation (structure always visible).
-- Every response logs a usage breakdown line (fresh/cache_read/cache_write/output).
+- request_end events carry duration, stop_reason, usage, and the AWS request id.
+- Full request payloads go to the separate payload logger (archie.payloads),
+  enabled via ARCHIE_LOG_PAYLOADS=1 — they're O(n²) over a session, too big
+  for the main log.
 """
 
 import json
@@ -33,10 +35,12 @@ from typing import Any
 import boto3
 from botocore.config import Config
 
+from archie.logs import PAYLOAD_LOGGER_NAME, log_event, payloads_enabled
 from archie.session import Turn
 from archie.types import TextBlock, ToolResultBlock, ToolUseBlock
 
 log = logging.getLogger(__name__)
+payload_log = logging.getLogger(PAYLOAD_LOGGER_NAME)
 
 
 # --- Stream Event types ---
@@ -160,13 +164,17 @@ class BedrockClient:
             params["toolConfig"] = {"tools": tool_config}
 
         self._log_request(params)
+        t0 = time.time()
         response = self._call_with_retry(params)
+        request_id = response.get("ResponseMetadata", {}).get("RequestId", "")
         stream = response["stream"]
 
         current_block_type: str | None = None
         current_tool_use_id: str = ""
         current_tool_name: str = ""
         current_tool_input_json: str = ""
+        usage: Usage | None = None
+        stop_reason: str = "unknown"
 
         for event in stream:
             if "contentBlockStart" in event:
@@ -214,11 +222,24 @@ class BedrockClient:
                     cache_read_input_tokens=raw.get("cacheReadInputTokens", 0),
                     cache_write_input_tokens=raw.get("cacheWriteInputTokens", 0),
                 )
-                self._log_usage(usage, "stream")
                 yield usage
 
             elif "messageStop" in event:
-                yield Done(stop_reason=event["messageStop"].get("stopReason", "end_turn"))
+                stop_reason = event["messageStop"].get("stopReason", "end_turn")
+                yield Done(stop_reason=stop_reason)
+
+        log_event(
+            log,
+            logging.INFO,
+            "request_end",
+            duration_s=round(time.time() - t0, 2),
+            stop_reason=stop_reason,
+            input=usage.input_tokens if usage else 0,
+            output=usage.output_tokens if usage else 0,
+            cache_read=usage.cache_read_input_tokens if usage else 0,
+            cache_write=usage.cache_write_input_tokens if usage else 0,
+            aws_request_id=request_id,
+        )
 
     def invoke(self, messages: list[dict], system: str) -> str:
         """Non-streaming call using boto3 converse(). Returns the response text."""
@@ -234,7 +255,12 @@ class BedrockClient:
             except self.client.exceptions.ThrottlingException:
                 if attempt == 2:
                     raise
-                time.sleep(2**attempt)
+                delay = 2**attempt
+                log.warning(
+                    "Throttled by Bedrock (invoke), retrying",
+                    extra={"delay_s": delay, "attempt": attempt + 1, "max_retries": 3},
+                )
+                time.sleep(delay)
 
         output = response.get("output", {}).get("message", {}).get("content", [])
         return "".join(block.get("text", "") for block in output)
@@ -253,15 +279,13 @@ class BedrockClient:
                     raise
                 delay = 2**attempt
                 log.warning(
-                    "Throttled by Bedrock, retrying in %ds (attempt %d/%d)",
-                    delay,
-                    attempt + 1,
-                    max_retries,
+                    "Throttled by Bedrock, retrying",
+                    extra={"delay_s": delay, "attempt": attempt + 1, "max_retries": max_retries},
                 )
                 time.sleep(delay)
             except self.client.exceptions.ValidationException as e:
                 if self._cache_supported and "cachePoint" in str(e):
-                    log.info("cachePoint not supported, disabling prompt caching")
+                    log.warning("cachePoint not supported, disabling prompt caching")
                     self._cache_supported = False
                     # Strip all cachePoint blocks from system and messages
                     params["system"] = [
@@ -278,28 +302,20 @@ class BedrockClient:
     # --- Logging helpers ---
 
     def _log_request(self, params: dict) -> None:
-        """Log the full request with each string leaf truncated to ~2KB.
+        """Log the full request to the payload logger (no-op unless enabled).
 
         Per-block truncation keeps the request *shape* visible (message count,
-        cache point positions, tool declarations) even when individual content is huge.
+        cache point positions, tool declarations) even when individual content
+        is huge. Goes to payloads.log, not the main log — payloads re-log the
+        whole conversation every iteration and would burn the rotation budget.
         """
+        if not payloads_enabled():
+            return
         try:
             payload = self._truncate_blocks(json.loads(json.dumps(params, default=str)))
-            log.debug("Request payload: %s", json.dumps(payload))
+            payload_log.debug("", extra={"event": "request_payload", "payload": payload})
         except Exception:
-            log.debug("Could not serialize request for logging")
-
-    @staticmethod
-    def _log_usage(usage: Usage, context: str) -> None:
-        """Log the per-request usage breakdown for cache-hit verification."""
-        log.debug(
-            "%s usage: fresh=%d cache_read=%d cache_write=%d output=%d",
-            context,
-            usage.input_tokens,
-            usage.cache_read_input_tokens,
-            usage.cache_write_input_tokens,
-            usage.output_tokens,
-        )
+            payload_log.debug("Could not serialize request for logging")
 
     def _truncate_blocks(self, obj: Any, limit: int = 2048) -> Any:
         """Recursively truncate string leaves so the request shape stays visible."""

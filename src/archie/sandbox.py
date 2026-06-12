@@ -13,11 +13,16 @@ presses Esc). The _active_process attribute is set while a command is
 running and cleared when it finishes.
 """
 
+import logging
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from archie.config import SandboxConfig
+from archie.logs import log_event
+
+log = logging.getLogger(__name__)
 
 
 class Sandbox:
@@ -103,11 +108,29 @@ class Sandbox:
 
             cmd.extend([self.config.image, "sleep", "infinity"])
 
+            t0 = time.time()
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
             if result.returncode != 0:
+                log_event(
+                    log,
+                    logging.ERROR,
+                    "sandbox_start_failed",
+                    container=self.container_name,
+                    image=self.config.image,
+                    error=result.stderr.strip()[:500],
+                )
                 raise RuntimeError(f"Failed to start sandbox container: {result.stderr.strip()}")
 
             self._running = True
+            log_event(
+                log,
+                logging.INFO,
+                "sandbox_started",
+                container=self.container_name,
+                image=self.config.image,
+                duration_s=round(time.time() - t0, 2),
+                mounts=len(mounts) + len(self.config.mounts),
+            )
 
     def exec(self, command: str) -> tuple[str, int]:
         """Execute a command inside the sandbox container.
@@ -179,6 +202,8 @@ class Sandbox:
             capture_output=True,
             check=False,
         )
+        if self._running:
+            log_event(log, logging.INFO, "sandbox_destroyed", container=self.container_name)
         self._running = False
 
     def _build_mounts(self) -> list[str]:

@@ -38,6 +38,7 @@ from archie.agent import (
 from archie.artifact_store import ArtifactStore
 from archie.config import load_config
 from archie.llm import BedrockClient
+from archie.logs import log_event
 from archie.models import get_model_info
 from archie.project import detect_project_dir
 from archie.prompt import SYSTEM_PROMPT
@@ -116,6 +117,14 @@ class ArchieApp(App):
             model_info=self.model_info,
             project_name=self.project_dir.name,
         )
+        log_event(
+            log,
+            logging.INFO,
+            "session_start",
+            session=self.session.session_id,
+            model=self.config.model,
+            project=self.project_dir.name,
+        )
         self.sandbox = Sandbox(
             config=self.config.sandbox,
             project_dir=self.project_dir,
@@ -126,12 +135,17 @@ class ArchieApp(App):
         allowed = [Path(p) for p in self.config.tools.allowed_directories]
         allowed.append(Path.home() / ".archie")
         self.artifact_store = ArtifactStore()
+        # Shared between read_file (populates), write/edit tools (invalidate on
+        # modification) and AgentLoop (invalidates on context eviction).
+        self.mtime_cache: dict[tuple[str, int, int], tuple[float, str]] = {}
         self.tool_registry = create_default_registry(
             self.project_dir,
             allowed,
             self.sandbox,
             brain_dir=self.config.brain_dir,
             artifact_store=self.artifact_store,
+            session_id_fn=lambda: self.session.session_id,
+            mtime_cache=self.mtime_cache,
         )
         self._agent = AgentLoop(
             llm_client=self.llm,
@@ -141,6 +155,7 @@ class ArchieApp(App):
             emit=self._on_agent_event,
             sandbox=self.sandbox,
             artifact_store=self.artifact_store,
+            mtime_cache=self.mtime_cache,
         )
 
     def compose(self) -> ComposeResult:
@@ -333,7 +348,7 @@ class ArchieApp(App):
             )
             extractor.extract_all()
         except Exception:  # noqa: BLE001
-            log.debug("Memory extraction failed", exc_info=True)
+            log.warning("Memory extraction failed", exc_info=True)
 
     # --- Actions ---
 

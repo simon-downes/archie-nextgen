@@ -10,34 +10,13 @@ import logging
 import os
 import subprocess
 import sys
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import click
 
-LOG_DIR = Path.home() / ".archie"
-LOG_PATH = LOG_DIR / "nextgen.log"
+from archie.logs import log_event, setup_logging
 
-
-def setup_logging() -> None:
-    """Configure always-on debug logging to a rotating file.
-
-    Called before anything else so even startup failures leave a trace.
-    Output goes to ~/.archie/nextgen.log, never to stdout/stderr (Textual owns the terminal).
-    Botocore/urllib3 are suppressed to WARNING — their DEBUG output is auth noise.
-    """
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    handler = RotatingFileHandler(
-        LOG_PATH, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"
-    )
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
-    root.addHandler(handler)
-
-    # Suppress noisy third-party loggers — only archie's own logs at DEBUG
-    for noisy in ("botocore", "urllib3", "boto3", "markdown_it"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+log = logging.getLogger(__name__)
 
 
 def check_docker_available() -> None:
@@ -98,6 +77,16 @@ def chat():
         config = load_config()
     except (KeyError, ValueError) as e:
         raise click.ClickException(str(e)) from None
+
+    log_event(
+        log,
+        logging.INFO,
+        "startup",
+        model=config.model,
+        region=config.region,
+        project_root=str(config.project_root),
+        sandbox_image=config.sandbox.image,
+    )
 
     # Pre-flight checks: warn if Docker isn't available (shell tool won't work)
     try:

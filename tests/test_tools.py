@@ -298,6 +298,43 @@ class TestReadFileMtimeDedup:
         assert "unchanged" not in result.lower()
         assert "line2" in result
 
+    def test_stub_references_originating_tool_use_id(self, tmp_path):
+        """The unchanged-stub names the tool result that holds the content."""
+        from archie.tools import current_tool_use_id
+        from archie.tools.read_file import make_read_file_spec
+
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello\n")
+        spec = make_read_file_spec(cwd=tmp_path, allowed_directories=[])
+
+        token = current_tool_use_id.set("tu_orig")
+        try:
+            spec.handler({"path": str(test_file)})
+        finally:
+            current_tool_use_id.reset(token)
+
+        result = spec.handler({"path": str(test_file)})
+        assert "unchanged" in result.lower()
+        assert "tu_orig" in result
+        assert "retrieve_artifact" in result
+
+    def test_eviction_invalidation_forces_reread(self, tmp_path):
+        """Removing the cache entry (as eviction does) makes the next read return content."""
+        from archie.tools.read_file import make_read_file_spec
+
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello\n")
+        cache: dict = {}
+        spec = make_read_file_spec(cwd=tmp_path, allowed_directories=[], mtime_cache=cache)
+
+        spec.handler({"path": str(test_file)})
+        assert cache  # populated
+
+        cache.clear()  # what _invalidate_mtime_entries does for this path
+        result = spec.handler({"path": str(test_file)})
+        assert "hello" in result
+        assert "unchanged" not in result.lower()
+
 
 class TestReadFileBudget:
     """Tests for char-budget pagination accuracy."""

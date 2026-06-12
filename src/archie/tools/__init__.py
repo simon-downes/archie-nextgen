@@ -12,6 +12,7 @@ Architecture:
 """
 
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,6 +20,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from archie.artifact_store import ArtifactStore
     from archie.sandbox import Sandbox
+
+
+# Set by the agent loop around each tool invocation. Handlers that need to
+# associate state with the originating call (e.g. read_file's mtime cache
+# remembering which tool result holds the cached content) read it here.
+# Default "" keeps direct handler calls (tests, scripts) working.
+current_tool_use_id: ContextVar[str] = ContextVar("current_tool_use_id", default="")
 
 
 @dataclass
@@ -147,6 +155,8 @@ def create_default_registry(
     sandbox: "Sandbox | None" = None,
     brain_dir: Path | None = None,
     artifact_store: "ArtifactStore | None" = None,
+    session_id_fn: "Callable[[], str] | None" = None,
+    mtime_cache: "dict[tuple[str, int, int], tuple[float, str]] | None" = None,
 ) -> ToolRegistry:
     """Create a ToolRegistry with the standard tool set.
 
@@ -162,6 +172,13 @@ def create_default_registry(
             tool is registered.
         artifact_store: Optional ArtifactStore. If provided, the retrieve_artifact
             tool is registered.
+        session_id_fn: Optional callable returning the current session id. If
+            provided, the self_debug tool is registered (model can inspect its
+            own debug log, filtered to the current session by default).
+        mtime_cache: Optional shared read-dedup cache. Pass the same dict to
+            AgentLoop so context eviction can invalidate entries whose cached
+            content is no longer in context. If None, a private dict is used
+            (write/edit invalidation still works; eviction invalidation doesn't).
     """
     from archie.tools.code import make_code_spec
     from archie.tools.edit_file import make_edit_file_spec
@@ -173,9 +190,11 @@ def create_default_registry(
     registry = ToolRegistry()
 
     # Shared mtime cache — read_file populates it, write/edit tools invalidate
-    # entries when they modify files. This ensures subsequent reads after a write
-    # return fresh content instead of "file unchanged" stubs.
-    mtime_cache: dict[tuple[str, int, int], float] = {}
+    # entries when they modify files, and the agent loop invalidates entries
+    # when the corresponding tool result is evicted from context. This ensures
+    # reads return fresh content instead of useless "file unchanged" stubs.
+    if mtime_cache is None:
+        mtime_cache = {}
 
     registry.register(make_list_files_spec(cwd, allowed_directories))
     registry.register(make_read_file_spec(cwd, allowed_directories, mtime_cache))
@@ -209,5 +228,12 @@ def create_default_registry(
         from archie.tools.retrieve_artifact import make_retrieve_artifact_spec
 
         registry.register(make_retrieve_artifact_spec(artifact_store))
+
+    # Self-debug tool: lets the model inspect its own debug log.
+    if session_id_fn is not None:
+        from archie.logs import LOG_PATH
+        from archie.tools.self_debug import make_self_debug_spec
+
+        registry.register(make_self_debug_spec(LOG_PATH, session_id_fn))
 
     return registry

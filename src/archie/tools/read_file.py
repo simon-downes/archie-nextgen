@@ -23,7 +23,7 @@ conventions.
 
 from pathlib import Path
 
-from archie.tools import ToolSpec, tool_error, tool_result, validate_path
+from archie.tools import ToolSpec, current_tool_use_id, tool_error, tool_result, validate_path
 
 # Maximum characters per line before truncation.
 # Lines longer than this are usually minified code, data, or generated content
@@ -47,12 +47,17 @@ def make_read_file_spec(
         allowed_directories: Additional directories the tool can access.
         mtime_cache: Optional shared cache dict for mtime dedup. If None,
             creates a private one. Shared cache allows write tools to
-            invalidate entries when they modify files.
+            invalidate entries when they modify files, and the agent loop to
+            invalidate entries when the cached content is evicted from context.
     """
-    # Mtime dedup cache: (resolved_path, offset, limit) → mtime
-    # If the file hasn't changed since last read with same params, return a stub.
-    # When shared with write tools, they can invalidate entries on file modification.
-    _mtime_cache: dict[tuple[str, int, int], float] = mtime_cache if mtime_cache is not None else {}
+    # Mtime dedup cache: (resolved_path, offset, limit) → (mtime, tool_use_id)
+    # If the file hasn't changed since last read with same params, return a stub
+    # pointing at the tool result that already holds the content. The tool_use_id
+    # lets the stub reference that result (and retrieve_artifact recover it), and
+    # lets the agent loop invalidate entries when that result is evicted.
+    _mtime_cache: dict[tuple[str, int, int], tuple[float, str]] = (
+        mtime_cache if mtime_cache is not None else {}
+    )
 
     def handler(params: dict) -> str:
         """Read a file and return line-numbered content.
@@ -81,9 +86,18 @@ def make_read_file_spec(
         cache_key = (resolved_str, offset, limit)
         try:
             current_mtime = resolved.stat().st_mtime
-            if cache_key in _mtime_cache and _mtime_cache[cache_key] == current_mtime:
+            cached = _mtime_cache.get(cache_key)
+            if cached is not None and cached[0] == current_mtime:
+                cached_id = cached[1]
+                hint = (
+                    f" Content is in context at tool result {cached_id}; if it has been"
+                    f' evicted, use retrieve_artifact with tool_use_id="{cached_id}".'
+                    if cached_id
+                    else ""
+                )
                 return tool_result(
-                    f"File unchanged since last read: {path_str} (offset={offset}, limit={limit})"
+                    f"File unchanged since last read: {path_str} "
+                    f"(offset={offset}, limit={limit}).{hint}"
                 )
         except OSError:
             pass  # Can't stat — proceed with the read, let it fail naturally
@@ -151,8 +165,10 @@ def make_read_file_spec(
         content = header + "\n\n" + "\n".join(numbered)
 
         # --- Update mtime cache on successful read ---
+        # Record which tool call produced this content so future stubs can
+        # point at it and eviction can invalidate this entry.
         try:
-            _mtime_cache[cache_key] = resolved.stat().st_mtime
+            _mtime_cache[cache_key] = (resolved.stat().st_mtime, current_tool_use_id.get())
         except OSError:
             pass
 

@@ -15,18 +15,15 @@ Key safety features:
   "replace all occurrences" — never happens by accident.
 """
 
-import logging
 from pathlib import Path
 
 from archie.tools import ToolSpec, tool_error, tool_result, validate_path
-
-log = logging.getLogger(__name__)
 
 
 def make_edit_file_spec(
     cwd: Path,
     allowed_directories: list[Path],
-    mtime_cache: dict[tuple[str, int, int], float],
+    mtime_cache: dict[tuple[str, int, int], tuple[float, str]],
 ) -> ToolSpec:
     """Create an edit_file ToolSpec bound to path constraints.
 
@@ -108,7 +105,6 @@ def make_edit_file_spec(
             detail = f"{edit_count} edit(s), {total_replacements} replacements"
         else:
             detail = f"{edit_count} edit(s) applied"
-        log.info("edit_file: %s (%s)", path_str, detail)
         return tool_result(f"Edited: {path_str} ({detail})")
 
     return ToolSpec(

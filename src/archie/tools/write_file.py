@@ -13,18 +13,15 @@ Design choices:
   return the fresh content, not "file unchanged" stubs
 """
 
-import logging
 from pathlib import Path
 
 from archie.tools import ToolSpec, tool_error, tool_result, validate_path
-
-log = logging.getLogger(__name__)
 
 
 def make_write_file_spec(
     cwd: Path,
     allowed_directories: list[Path],
-    mtime_cache: dict[tuple[str, int, int], float],
+    mtime_cache: dict[tuple[str, int, int], tuple[float, str]],
 ) -> ToolSpec:
     """Create a write_file ToolSpec bound to path constraints.
 
@@ -72,7 +69,6 @@ def make_write_file_spec(
 
         # Report line count for confirmation
         line_count = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
-        log.info("write_file: %s (%d lines)", path_str, line_count)
         return tool_result(f"Written: {path_str} ({line_count} lines)")
 
     return ToolSpec(

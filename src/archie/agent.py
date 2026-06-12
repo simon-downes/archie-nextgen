@@ -30,8 +30,9 @@ from typing import TYPE_CHECKING
 from archie.artifact_store import ArtifactStore
 from archie.llm import BedrockClient, Done, ToolUseEvent, Usage
 from archie.llm import TextDelta as LlmTextDelta
+from archie.logs import bind, clear, log_event
 from archie.session import Session, Turn, TurnLog, summarise_tool_output
-from archie.tools import ToolRegistry, truncate_result
+from archie.tools import ToolRegistry, current_tool_use_id, truncate_result
 from archie.types import TextBlock, ToolResultBlock, ToolUseBlock
 
 if TYPE_CHECKING:
@@ -122,6 +123,14 @@ MAX_TOOL_ITERATIONS = 50
 CONSECUTIVE_WARN = 3
 CONSECUTIVE_BLOCK = 4
 
+# Within-turn eviction: long agentic turns accumulate tool results that inflate
+# every subsequent request in the turn. Once more than THRESHOLD un-evicted
+# tool-result turns exist in the current turn, all but the most recent KEEP are
+# evicted. The hysteresis gap (THRESHOLD - KEEP) means the prompt-cache prefix
+# is only broken once every 10 iterations, not on every request.
+WITHIN_TURN_EVICT_THRESHOLD = 20
+WITHIN_TURN_KEEP = 10
+
 
 def _hash_args(args: dict) -> str:
     """Create a stable hash of tool arguments for repetition detection."""
@@ -153,6 +162,7 @@ class AgentLoop:
         emit: Callable[[AgentEvent], None],
         sandbox: "Sandbox | None" = None,
         artifact_store: ArtifactStore | None = None,
+        mtime_cache: dict[tuple[str, int, int], tuple[float, str]] | None = None,
     ):
         self.llm = llm_client
         self.session = session
@@ -161,19 +171,31 @@ class AgentLoop:
         self._emit = emit
         self.sandbox = sandbox
         self.artifact_store = artifact_store or ArtifactStore()
+        # Shared with read_file (see create_default_registry). Entries record
+        # which tool result holds the cached content; when that result is
+        # evicted from context we invalidate the entry so the next read returns
+        # real content instead of a useless "file unchanged" stub.
+        self._mtime_cache = mtime_cache if mtime_cache is not None else {}
 
         self._interrupt = threading.Event()
+        self._interrupt_logged: bool = False
         self._last_call_key: tuple[str, str] | None = None
         self._consecutive_count: int = 0
         self._completed_turns: int = 0
+        self._last_turn_interrupted: bool = False
+        # Turn ids evicted mid-turn (see _maybe_evict_within_turn)
+        self._within_turn_evicted: set[str] = set()
 
     def interrupt(self) -> None:
         """Request abort of the in-flight turn. Thread-safe; called from the UI thread."""
         self._interrupt.set()
 
-    def _check_interrupt(self) -> None:
-        """Raise _InterruptedError if abort was requested."""
+    def _check_interrupt(self, phase: str = "") -> None:
+        """Raise _InterruptedError if abort was requested. Logs once per turn."""
         if self._interrupt.is_set():
+            if not self._interrupt_logged:
+                self._interrupt_logged = True
+                log_event(log, logging.INFO, "interrupt", phase=phase or "unknown")
             raise _InterruptedError
 
     def run_turn(self, user_message: str) -> None:
@@ -182,8 +204,11 @@ class AgentLoop:
         All outcomes end with exactly one terminal event emitted.
         """
         self._interrupt.clear()
+        self._interrupt_logged = False
+        self._dedupe_resent_prompt(user_message)
         self.session.add_turn("user", user_message)
-        log.info("turn_start session=%s user=%r", self.session.session_id, user_message[:100])
+        bind(session=self.session.session_id, turn=self._completed_turns + 1)
+        log_event(log, logging.INFO, "turn_start", user=user_message[:100])
 
         turn_log = TurnLog(
             when=datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
@@ -197,7 +222,7 @@ class AgentLoop:
 
         try:
             for iteration in range(MAX_TOOL_ITERATIONS):
-                log.debug("request_start iteration=%d", iteration + 1)
+                bind(iteration=iteration + 1)
                 r = self._do_request()
                 total_input += r.input_tokens
                 total_output += r.output_tokens
@@ -236,28 +261,35 @@ class AgentLoop:
 
                 # Execute tools (each result committed to session immediately)
                 self._execute_tools(r.tool_use_blocks, turn_log)
+                self._maybe_evict_within_turn()
             else:
-                log.warning("Agent hit iteration cap (%d)", MAX_TOOL_ITERATIONS)
+                log_event(log, logging.WARNING, "iteration_cap", cap=MAX_TOOL_ITERATIONS)
 
+            bind(iteration=None)
             turn_log.input_tokens = total_input
             turn_log.output_tokens = total_output
             turn_log.cache_read_tokens = total_cache_read
             turn_log.cache_write_tokens = total_cache_write
             self.session.flush_turn(turn_log)
             self._completed_turns += 1
-            log.info(
-                "turn_end status=complete iterations=%d input=%d output=%d "
-                "cache_read=%d cache_write=%d cost=%.4f",
-                iteration + 1,
-                total_input,
-                total_output,
-                total_cache_read,
-                total_cache_write,
-                self.session.total_cost,
+            self._last_turn_interrupted = False
+            log_event(
+                log,
+                logging.INFO,
+                "turn_end",
+                status="complete",
+                iterations=iteration + 1,
+                input=total_input,
+                output=total_output,
+                cache_read=total_cache_read,
+                cache_write=total_cache_write,
+                cost=round(self.session.total_cost, 4),
             )
             self._emit(TurnComplete(stop_reason=r.stop_reason))
 
         except _InterruptedError:
+            bind(iteration=None)
+            self._last_turn_interrupted = True
             self._finalise_interrupted_turn()
             turn_log.input_tokens = total_input
             turn_log.output_tokens = total_output
@@ -265,19 +297,43 @@ class AgentLoop:
             turn_log.cache_write_tokens = total_cache_write
             turn_log.interrupted = True
             self.session.flush_turn(turn_log)
-            log.info("turn_end status=interrupted iterations=%d", iteration + 1)
+            log_event(
+                log,
+                logging.INFO,
+                "turn_end",
+                status="interrupted",
+                iterations=iteration + 1,
+                input=total_input,
+                output=total_output,
+                cache_read=total_cache_read,
+                cache_write=total_cache_write,
+            )
             self._emit(TurnInterrupted())
 
         except Exception as e:
-            log.exception("Turn failed")
+            self._last_turn_interrupted = True
             self._finalise_interrupted_turn()
             turn_log.input_tokens = total_input
             turn_log.output_tokens = total_output
             turn_log.cache_read_tokens = total_cache_read
             turn_log.cache_write_tokens = total_cache_write
             self.session.flush_turn(turn_log)
-            log.info("turn_end status=error message=%r", str(e)[:200])
+            # Single ERROR record: traceback + turn fields together
+            log_event(
+                log,
+                logging.ERROR,
+                "turn_end",
+                exc_info=True,
+                status="error",
+                error=str(e)[:200],
+                iterations=iteration + 1,
+                input=total_input,
+                output=total_output,
+            )
             self._emit(TurnError(message=str(e)))
+
+        finally:
+            clear()
 
     def _do_request(self) -> RequestResult:
         """Stream one LLM call.
@@ -285,7 +341,7 @@ class AgentLoop:
         On interrupt mid-stream, commits any partial text to session before re-raising
         so the interrupted response is preserved in history.
         """
-        self._check_interrupt()
+        self._check_interrupt("pre_request")
 
         text_chunks: list[str] = []
         tool_use_blocks: list[ToolUseBlock] = []
@@ -295,13 +351,27 @@ class AgentLoop:
         turn_cache_read = 0
         turn_cache_write = 0
 
+        context = self._build_context()
+        est_chars = sum(
+            len(block.text) if isinstance(block, TextBlock) else len(str(block))
+            for turn in context
+            for block in turn.content
+        )
+        log_event(
+            log,
+            logging.DEBUG,
+            "request_start",
+            messages=len(context),
+            est_tokens=est_chars // 4,
+        )
+
         try:
             for event in self.llm.stream(
-                messages=self._build_context(),
+                messages=context,
                 system=self.system_prompt,
                 tool_config=self.tools.to_tool_config() or None,
             ):
-                self._check_interrupt()
+                self._check_interrupt("stream")
                 match event:
                     case LlmTextDelta(text=text):
                         text_chunks.append(text)
@@ -346,12 +416,22 @@ class AgentLoop:
         results: list[ToolResultBlock] = []
         try:
             for block in tool_blocks:
-                self._check_interrupt()
+                self._check_interrupt("tools")
                 self._emit(
                     ToolStarted(tool_use_id=block.tool_use_id, name=block.name, input=block.input)
                 )
+                log_event(
+                    log,
+                    logging.DEBUG,
+                    "tool_start",
+                    tool_use_id=block.tool_use_id,
+                    tool=block.name,
+                    input=json.dumps(block.input, default=str)[:500],
+                )
+                t0 = time.time()
 
                 content, is_error = self._run_one_tool(block.name, block.input, block.tool_use_id)
+                duration = time.time() - t0
                 summary = summarise_tool_output(block.name, block.input, content, is_error)
                 self.artifact_store.put(block.tool_use_id, content, summary)
 
@@ -367,8 +447,21 @@ class AgentLoop:
                 )
 
                 spec = self.tools.get(block.name)
+                result_bytes = len(content)
                 if not spec or not spec.self_truncating:
                     content = truncate_result(content)
+                log_event(
+                    log,
+                    logging.WARNING if is_error else logging.INFO,
+                    "tool_end",
+                    tool_use_id=block.tool_use_id,
+                    tool=block.name,
+                    duration_s=round(duration, 2),
+                    status="error" if is_error else "success",
+                    result_bytes=result_bytes,
+                    truncated=len(content) < result_bytes,
+                    **({"error": content.split("\n")[0][:200]} if is_error else {}),
+                )
                 results.append(
                     ToolResultBlock(
                         tool_use_id=block.tool_use_id, content=content, is_error=is_error
@@ -383,7 +476,7 @@ class AgentLoop:
                         is_error=is_error,
                     )
                 )
-                self._check_interrupt()
+                self._check_interrupt("tools")
         except _InterruptedError:
             # Commit completed results before propagating
             if results:
@@ -413,25 +506,15 @@ class AgentLoop:
         if spec is None:
             return f"Error: Unknown tool '{name}'", True
 
-        log.debug("tool_call id=%s name=%s input=%s", tool_use_id, name, str(args)[:500])
-        t0 = time.time()
         try:
-            result = spec.handler(args)
+            token = current_tool_use_id.set(tool_use_id)
+            try:
+                result = spec.handler(args)
+            finally:
+                current_tool_use_id.reset(token)
         except Exception as e:
-            duration = time.time() - t0
-            log.info(
-                "tool_done id=%s name=%s duration=%.1fs status=error error=%s",
-                tool_use_id,
-                name,
-                duration,
-                str(e)[:100],
-            )
+            log.debug("Tool handler raised", exc_info=True)
             return f"Error: Tool execution failed: {e}", True
-
-        duration = time.time() - t0
-        log.info(
-            "tool_done id=%s name=%s duration=%.1fs status=success", tool_use_id, name, duration
-        )
 
         if self._consecutive_count == CONSECUTIVE_WARN:
             result += (
@@ -499,6 +582,41 @@ class AgentLoop:
                 if idx == len(self.session.turns) - 1:
                     self.session.turns.remove(last)
 
+    def _dedupe_resent_prompt(self, user_message: str) -> None:
+        """Drop superseded history when the user re-sends a prompt after an interrupt.
+
+        Interrupting and re-sending the same prompt would otherwise leave the
+        earlier copy (plus partial response and tool activity) in history for
+        the rest of the session, bloating every subsequent request. If the
+        previous turn was interrupted/errored and its user prompt matches the
+        new message exactly, everything from that prompt onward is removed —
+        the re-run supersedes it. Dropping from the user text turn to the end
+        keeps toolUse/toolResult pairing intact (both sides are dropped).
+        """
+        if not self._last_turn_interrupted:
+            return
+        turns = self.session.turns
+        for i in range(len(turns) - 1, -1, -1):
+            t = turns[i]
+            if t.role == "user" and t.content and isinstance(t.content[0], TextBlock):
+                if t.content[0].text == user_message:
+                    dropped = turns[i:]
+                    # Invalidate mtime entries pointing at dropped tool results —
+                    # their content is leaving context, so "file unchanged" stubs
+                    # referencing them would be useless.
+                    for dt in dropped:
+                        for b in dt.content:
+                            if isinstance(b, ToolResultBlock):
+                                self._invalidate_mtime_entries(b.tool_use_id)
+                    del turns[i:]
+                    log_event(
+                        log,
+                        logging.INFO,
+                        "resent_prompt_deduped",
+                        dropped_turns=len(dropped),
+                    )
+                break
+
     def _build_context(self) -> list[Turn]:
         """Build the message list with old tool results replaced by stubs.
 
@@ -511,15 +629,17 @@ class AgentLoop:
 
         result = []
         for i, turn in enumerate(turns):
-            if (
+            boundary_evict = (
                 i < eviction_boundary
                 and turn.role == "user"
                 and any(isinstance(b, ToolResultBlock) for b in turn.content)
-            ):
+            )
+            if boundary_evict or turn.id in self._within_turn_evicted:
                 new_content = []
                 for block in turn.content:
                     if isinstance(block, ToolResultBlock):
                         stub = self._make_eviction_stub(block.tool_use_id, turns[:i])
+                        self._invalidate_mtime_entries(block.tool_use_id)
                         new_content.append(
                             ToolResultBlock(
                                 tool_use_id=block.tool_use_id,
@@ -547,6 +667,59 @@ class AgentLoop:
                     return i
         return 0
 
+    def _maybe_evict_within_turn(self) -> None:
+        """Evict old tool results accumulated within the current turn.
+
+        Long agentic turns (many tool iterations) never cross the user-turn
+        eviction boundary, so results pile up and inflate every request in the
+        turn. Once more than WITHIN_TURN_EVICT_THRESHOLD un-evicted tool-result
+        turns have accumulated since the current user message, evict all but
+        the most recent WITHIN_TURN_KEEP. The full content remains recoverable
+        via retrieve_artifact.
+
+        Hysteresis: evicting in batches of (THRESHOLD - KEEP) breaks the
+        prompt-cache prefix once per batch rather than on every request.
+        """
+        turns = self.session.turns
+        # Start of the current turn = last user text turn
+        start = 0
+        for i in range(len(turns) - 1, -1, -1):
+            t = turns[i]
+            if t.role == "user" and t.content and isinstance(t.content[0], TextBlock):
+                start = i
+                break
+
+        candidates = [
+            t
+            for t in turns[start:]
+            if t.role == "user"
+            and t.id not in self._within_turn_evicted
+            and any(isinstance(b, ToolResultBlock) for b in t.content)
+        ]
+        if len(candidates) <= WITHIN_TURN_EVICT_THRESHOLD:
+            return
+        to_evict = candidates[: len(candidates) - WITHIN_TURN_KEEP]
+        for t in to_evict:
+            self._within_turn_evicted.add(t.id)
+        log_event(
+            log,
+            logging.INFO,
+            "within_turn_eviction",
+            evicted_turns=len(to_evict),
+            kept_turns=WITHIN_TURN_KEEP,
+        )
+
+    def _invalidate_mtime_entries(self, tool_use_id: str) -> None:
+        """Remove read-dedup cache entries whose content lives in an evicted result.
+
+        Without this, a re-read after eviction returns "file unchanged" pointing
+        at content the model can no longer see — forcing it to dodge the cache
+        with varied offsets (observed in session analysis).
+        """
+        stale = [k for k, v in self._mtime_cache.items() if v[1] == tool_use_id]
+        for k in stale:
+            del self._mtime_cache[k]
+
     def _make_eviction_stub(self, tool_use_id: str, preceding_turns: list[Turn]) -> str:
         """Build a stub string for an evicted tool result."""
         artifact = self.artifact_store.get(tool_use_id)
@@ -562,4 +735,7 @@ class AgentLoop:
                 if tool_name != "unknown":
                     break
 
-        return f"[evicted: {tool_name} — {summary} | id: {tool_use_id}]"
+        return (
+            f"[evicted: {tool_name} — {summary} | id: {tool_use_id} — "
+            f"use retrieve_artifact to recover if needed]"
+        )
