@@ -66,6 +66,7 @@ def make_code_spec(cwd: Path, allowed_directories: list[Path]) -> ToolSpec:
             "required": ["operation"],
         },
         handler=handler,
+        self_truncating=True,
     )
 
 

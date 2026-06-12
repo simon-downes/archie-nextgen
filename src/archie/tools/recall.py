@@ -166,6 +166,7 @@ def make_recall_spec(brain_dir: Path) -> ToolSpec:
             "required": ["query"],
         },
         handler=handler,
+        self_truncating=True,
     )
 
 

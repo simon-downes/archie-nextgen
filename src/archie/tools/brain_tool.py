@@ -102,6 +102,7 @@ def make_brain_spec(brain_dir: Path) -> ToolSpec:
             "required": ["operation"],
         },
         handler=handler,
+        self_truncating=True,
     )
 
 

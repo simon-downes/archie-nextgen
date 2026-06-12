@@ -29,7 +29,7 @@ from archie.tools import ToolSpec, current_tool_use_id, tool_error, tool_result,
 # Lines longer than this are usually minified code, data, or generated content
 # that isn't useful to read in full. We truncate to save context budget.
 _LINE_LENGTH_CAP = 500
-_CHAR_BUDGET = 8000  # ~130-160 lines of typical code
+_CHAR_BUDGET = 32000  # ~500-800 lines of typical code
 
 
 def make_read_file_spec(

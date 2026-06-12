@@ -346,8 +346,8 @@ class TestReadFileBudget:
         """Following the pagination hint produces contiguous lines with no gap."""
         from archie.tools.read_file import make_read_file_spec
 
-        # Create a file large enough to exceed the 8KB budget
-        lines = [f"line {i}: {'x' * 50}" for i in range(300)]
+        # Create a file large enough to exceed the 32KB budget
+        lines = [f"line {i}: {'x' * 80}" for i in range(600)]
         big_file = tmp_path / "big.py"
         big_file.write_text("\n".join(lines))
 

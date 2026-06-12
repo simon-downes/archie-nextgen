@@ -39,4 +39,5 @@ def make_retrieve_artifact_spec(store: ArtifactStore) -> ToolSpec:
             "required": ["tool_use_id"],
         },
         handler=handler,
+        self_truncating=True,
     )
