@@ -431,6 +431,14 @@ class ArchieApp(App):
         conv.remove_children()
         self._update_status()
 
+    def on_exception(self, error: Exception) -> None:
+        """Log unhandled exceptions before Textual crashes.
+
+        Without this, exceptions in widgets (e.g. Markdown rendering failures)
+        vanish silently or only appear briefly on stderr after the TUI exits.
+        """
+        log_event(log, logging.ERROR, "unhandled_exception", exc_info=True, error=str(error)[:500])
+
     def switch_model(self, model_id: str) -> None:
         """Switch to a different model mid-session. Takes effect on the next turn.
 
