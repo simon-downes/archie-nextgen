@@ -90,7 +90,9 @@ class ArchieApp(App):
         self.model_info = get_model_info(self.config.model)
         self.llm = BedrockClient(
             model_id=self.config.model,
-            region=self.config.region,
+            # Models with an in-region-only endpoint pin their own region;
+            # geo-inference models fall back to the configured session region.
+            region=self.model_info.region or self.config.region,
             max_output_tokens=self.model_info.max_output_tokens,
         )
         self.project_dir = detect_project_dir(Path.cwd(), self.config.project_root)

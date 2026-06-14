@@ -19,6 +19,7 @@ from ulid import ULID
 
 from archie.config import SESSIONS_DIR
 from archie.llm.bedrock import BedrockClient
+from archie.models import MODELS
 
 log = logging.getLogger(__name__)
 
@@ -66,15 +67,28 @@ class MemoryExtractor:
 
     Args:
         brain_dir: Root brain directory (memory lives at brain_dir/_memory/).
-        extraction_model: Bedrock model ID for extraction (e.g. Haiku).
-        region: AWS region for Bedrock API calls.
+        extraction_model: Bedrock model ID for extraction (e.g. Haiku). This is
+            intentionally its own client on a cheap model — distinct from the
+            agent's main conversation model.
+        region: Session AWS region. Used unless the extraction model is pinned
+            to a specific in-region endpoint in the registry.
     """
 
     def __init__(self, brain_dir: Path, extraction_model: str, region: str) -> None:
         self._memory_dir = brain_dir / "_memory"
         self._memory_dir.mkdir(parents=True, exist_ok=True)
         self._watermark_path = self._memory_dir / ".last_extracted"
-        self._client = BedrockClient(extraction_model, region)
+        # Resolve registry overrides the same way the main client does: a model
+        # with an in-region-only endpoint pins its own region, and its output
+        # cap may be lower than the BedrockClient default.
+        info = MODELS.get(extraction_model)
+        client_region = info.region or region if info else region
+        max_output = info.max_output_tokens if info else 32_768
+        self._client = BedrockClient(
+            extraction_model,
+            client_region,
+            max_output_tokens=max_output,
+        )
 
     def extract_all(self) -> int:
         """Process all unextracted turns from all session files. Returns fragment count."""
