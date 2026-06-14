@@ -129,8 +129,7 @@ class TestToolUse:
         assert len(session.turns) == 4
 
     def test_iteration_cap(self, session, registry):
-        """Hits the 50-iteration safety cap."""
-        # Use distinct inputs to avoid the consecutive-call blocker
+        """Hits the 50-iteration safety cap."""  # Use distinct inputs to avoid the consecutive-call blocker
         tool_responses = [
             [
                 ToolUseEvent(tool_use_id=f"t{i}", name="echo", input={"text": f"msg{i}"}),
@@ -147,6 +146,52 @@ class TestToolUse:
 
         # Should complete without crashing
         assert events[-1] == TurnComplete(stop_reason="tool_use")
+
+    def test_truncated_tool_call_not_executed(self, session, registry):
+        """A tool call truncated at max_tokens gets an error result, not execution."""
+        executed = []
+        registry.register(
+            ToolSpec(
+                name="tracker",
+                description="records calls",
+                schema={"type": "object", "properties": {}},
+                handler=lambda params: executed.append(params) or "ok",
+            )
+        )
+        llm = _mock_llm(
+            # First call: tool args truncated at the output token limit
+            [
+                ToolUseEvent(tool_use_id="t1", name="tracker", input={}, input_truncated=True),
+                Usage(input_tokens=20, output_tokens=10),
+                Done(stop_reason="max_tokens"),
+            ],
+            # Second call: model recovers
+            [
+                LlmTextDelta(text="Retrying smaller"),
+                Usage(input_tokens=30, output_tokens=5),
+                Done(stop_reason="end_turn"),
+            ],
+        )
+        events = []
+        agent = AgentLoop(llm, session, registry, "system", events.append)
+
+        agent.run_turn("Do it")
+
+        # Tool must NOT run
+        assert executed == []
+        # The model gets an error result instructing it to split the work
+        from archie.types import ToolResultBlock
+
+        results = [b for t in session.turns for b in t.content if isinstance(b, ToolResultBlock)]
+        assert len(results) == 1
+        assert results[0].tool_use_id == "t1"
+        assert results[0].is_error
+        assert "smaller pieces" in results[0].content
+        # Loop continues after repair: second LLM call happened
+        assert events[-1] == TurnComplete(stop_reason="end_turn")
+        # History stays valid: every toolUse paired with a toolResult
+        finished = [e for e in events if isinstance(e, ToolFinished)]
+        assert finished and finished[0].is_error
 
 
 class TestInterrupt:

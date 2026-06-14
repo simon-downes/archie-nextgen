@@ -23,7 +23,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -153,6 +153,7 @@ class RequestResult:
     cache_read_tokens: int
     cache_write_tokens: int
     stop_reason: str
+    truncated_tool_ids: set[str] = field(default_factory=set)
 
 
 class AgentLoop:
@@ -267,11 +268,14 @@ class AgentLoop:
                     )
                 )
 
-                if r.stop_reason != "tool_use" or not r.tool_use_blocks:
+                if not r.tool_use_blocks or r.stop_reason not in ("tool_use", "max_tokens"):
                     break
 
-                # Execute tools (each result committed to session immediately)
-                self._execute_tools(r.tool_use_blocks, turn_log)
+                # Execute tools (each result committed to session immediately).
+                # On max_tokens, tool calls whose args were truncated mid-stream
+                # are paired with error results (never executed) so history stays
+                # valid and the model is told to split the work into smaller pieces.
+                self._execute_tools(r.tool_use_blocks, turn_log, truncated_ids=r.truncated_tool_ids)
                 self._maybe_evict_within_turn()
             else:
                 log_event(log, logging.WARNING, "iteration_cap", cap=MAX_TOOL_ITERATIONS)
@@ -356,6 +360,7 @@ class AgentLoop:
 
         text_chunks: list[str] = []
         tool_use_blocks: list[ToolUseBlock] = []
+        truncated_tool_ids: set[str] = set()
         stop_reason = "end_turn"
         turn_input = 0
         turn_output = 0
@@ -387,8 +392,12 @@ class AgentLoop:
                     case LlmTextDelta(text=text):
                         text_chunks.append(text)
                         self._emit(TextDeltaEvent(text=text))
-                    case ToolUseEvent(tool_use_id=tid, name=name, input=inp):
+                    case ToolUseEvent(
+                        tool_use_id=tid, name=name, input=inp, input_truncated=truncated
+                    ):
                         tool_use_blocks.append(ToolUseBlock(tool_use_id=tid, name=name, input=inp))
+                        if truncated:
+                            truncated_tool_ids.add(tid)
                     case Usage(
                         input_tokens=it,
                         output_tokens=ot,
@@ -415,19 +424,75 @@ class AgentLoop:
             cache_read_tokens=turn_cache_read,
             cache_write_tokens=turn_cache_write,
             stop_reason=stop_reason,
+            truncated_tool_ids=truncated_tool_ids,
         )
 
-    def _execute_tools(self, tool_blocks: list[ToolUseBlock], turn_log: TurnLog) -> None:
+    def _execute_tools(
+        self,
+        tool_blocks: list[ToolUseBlock],
+        turn_log: TurnLog,
+        truncated_ids: set[str] | None = None,
+    ) -> None:
         """Run tool calls, batching results into a single user turn.
 
         Bedrock requires all toolResult blocks for a given assistant turn to be in
         one user message. We collect results and commit them together at the end.
         On interrupt, we commit whatever's been collected so far before propagating.
+
+        Blocks listed in truncated_ids had their args JSON cut off by the output
+        token limit; they are never executed — each gets an error result telling
+        the model to split the work into smaller pieces.
         """
+        truncated_ids = truncated_ids or set()
         results: list[ToolResultBlock] = []
         try:
             for block in tool_blocks:
                 self._check_interrupt("tools")
+
+                if block.tool_use_id in truncated_ids:
+                    content = (
+                        "Tool call not executed: your response hit the maximum output "
+                        "token limit before the arguments were complete. Retry in "
+                        "smaller pieces — e.g. write large files in parts (write_file "
+                        "for the first part, then write_file with append=true for the "
+                        "rest), and split large batches of tool calls across responses."
+                    )
+                    log_event(
+                        log,
+                        logging.WARNING,
+                        "tool_truncated",
+                        tool_use_id=block.tool_use_id,
+                        tool=block.name,
+                    )
+                    turn_log.tools.append(
+                        {
+                            "id": block.tool_use_id,
+                            "name": block.name,
+                            "input": block.input,
+                            "success": False,
+                            "summary": "args truncated at output token limit — not executed",
+                            "error": "tool args truncated at max output tokens",
+                        }
+                    )
+                    results.append(
+                        ToolResultBlock(
+                            tool_use_id=block.tool_use_id, content=content, is_error=True
+                        )
+                    )
+                    self._emit(
+                        ToolFinished(
+                            tool_use_id=block.tool_use_id,
+                            name=block.name,
+                            summary="args truncated at output token limit — not executed",
+                            is_error=True,
+                            ui_summary=format_tool_complete(
+                                block.name, block.input, content, True, self.cwd
+                            ),
+                            ui_detail=None,
+                        )
+                    )
+                    continue
+
                 self._emit(
                     ToolStarted(
                         tool_use_id=block.tool_use_id,
@@ -553,9 +618,13 @@ class AgentLoop:
     def _finalise_interrupted_turn(self) -> None:
         """Repair history so every toolUse has a matching toolResult.
 
-        When interrupted mid-tool-batch, some results are already committed in a user
-        turn. We must append synthetic results to THAT turn (not create a second one)
-        to avoid consecutive user messages which violate the Bedrock protocol.
+        Synthetic results must land in the user turn immediately AFTER the
+        assistant turn containing the unpaired toolUse — a toolResult that
+        appears before its toolUse violates the Bedrock protocol (this exact
+        mis-ordering once made a session unrecoverable). When interrupted
+        mid-tool-batch, partial results are already committed in that following
+        user turn, so we extend it rather than create a second one (consecutive
+        user messages are also a protocol violation).
         """
         # Collect all tool_use_ids that already have results
         result_ids = set()
@@ -564,35 +633,37 @@ class AgentLoop:
                 if isinstance(block, ToolResultBlock):
                     result_ids.add(block.tool_use_id)
 
-        # Find unpaired toolUse blocks and synthesise results
-        unpaired = []
-        for turn in self.session.turns:
-            for block in turn.content:
-                if isinstance(block, ToolUseBlock) and block.tool_use_id not in result_ids:
-                    unpaired.append(block)
-
-        if unpaired:
-            synthetic = [
-                ToolResultBlock(
-                    tool_use_id=b.tool_use_id,
-                    content="[interrupted by user]",
-                    is_error=True,
-                )
-                for b in unpaired
-            ]
-            # Find the last user turn with tool results and extend it
-            last_result_turn = None
-            for turn in reversed(self.session.turns):
-                if turn.role == "user" and any(
-                    isinstance(b, ToolResultBlock) for b in turn.content
-                ):
-                    last_result_turn = turn
-                    break
-
-            if last_result_turn is not None:
-                last_result_turn.content = list(last_result_turn.content) + synthetic
-            else:
-                self.session.add_turn("user", synthetic)
+        # Walk assistant turns; pair any unpaired toolUse with synthetic results
+        # placed directly after the turn that contains it.
+        i = 0
+        while i < len(self.session.turns):
+            turn = self.session.turns[i]
+            if turn.role == "assistant":
+                unpaired = [
+                    b
+                    for b in turn.content
+                    if isinstance(b, ToolUseBlock) and b.tool_use_id not in result_ids
+                ]
+                if unpaired:
+                    synthetic = [
+                        ToolResultBlock(
+                            tool_use_id=b.tool_use_id,
+                            content="[interrupted by user]",
+                            is_error=True,
+                        )
+                        for b in unpaired
+                    ]
+                    next_turn = (
+                        self.session.turns[i + 1] if i + 1 < len(self.session.turns) else None
+                    )
+                    if next_turn is not None and next_turn.role == "user":
+                        next_turn.content = list(next_turn.content) + synthetic
+                    else:
+                        new_turn = self.session.add_turn("user", synthetic)
+                        if self.session.turns[i + 1] is not new_turn:
+                            self.session.turns.remove(new_turn)
+                            self.session.turns.insert(i + 1, new_turn)
+            i += 1
 
         # If the turn has only the user's original text message with nothing after it,
         # remove it — re-sending a prompt that got no response would confuse the model.

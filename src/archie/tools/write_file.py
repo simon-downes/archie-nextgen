@@ -37,6 +37,7 @@ def make_write_file_spec(
     def handler(params: dict) -> str:
         path_str = params["path"]
         content = params["content"]
+        append = bool(params.get("append", False))
 
         # Security: enforce path allowlist
         try:
@@ -72,7 +73,11 @@ def make_write_file_spec(
 
         # Write the file
         try:
-            resolved.write_text(content, encoding="utf-8")
+            if append and resolved.is_file():
+                with resolved.open("a", encoding="utf-8") as f:
+                    f.write(content)
+            else:
+                resolved.write_text(content, encoding="utf-8")
         except OSError as e:
             return tool_error(f"Cannot write file: {e}")
 
@@ -85,6 +90,8 @@ def make_write_file_spec(
 
         # Report line count for confirmation
         line_count = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
+        if append:
+            return tool_result(f"Appended: {path_str} (+{line_count} lines)")
         return tool_result(f"Written: {path_str} ({line_count} lines)")
 
     return ToolSpec(
@@ -92,7 +99,8 @@ def make_write_file_spec(
         description=(
             "Create a new file or overwrite an existing file with the provided content. "
             "Use for new files or full rewrites. For surgical edits to existing files, "
-            "use edit_file instead."
+            "use edit_file instead. For very large files, write in parts: first call "
+            "without append, subsequent calls with append=true."
         ),
         schema={
             "type": "object",
@@ -104,6 +112,13 @@ def make_write_file_spec(
                 "content": {
                     "type": "string",
                     "description": "Complete file content to write",
+                },
+                "append": {
+                    "type": "boolean",
+                    "description": (
+                        "Append to the end of the file instead of overwriting "
+                        "(default false). Use to write large files in parts."
+                    ),
                 },
             },
             "required": ["path", "content"],

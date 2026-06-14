@@ -55,11 +55,17 @@ class TextDelta:
 
 @dataclass
 class ToolUseEvent:
-    """A complete tool call parsed from the stream."""
+    """A complete tool call parsed from the stream.
+
+    input_truncated is True when the args JSON didn't parse — typically because
+    generation stopped at the max output token limit mid-call. The agent loop
+    must not execute such a call; it pairs it with an error result instead.
+    """
 
     tool_use_id: str
     name: str
     input: dict
+    input_truncated: bool = False
 
 
 @dataclass
@@ -125,7 +131,7 @@ class BedrockClient:
     - Failing fast on validation errors (context too large)
     """
 
-    def __init__(self, model_id: str, region: str, max_output_tokens: int = 16_384):
+    def __init__(self, model_id: str, region: str, max_output_tokens: int = 32_768):
         self.model_id = model_id
         self.max_output_tokens = max_output_tokens
         self.client = boto3.client(
@@ -196,21 +202,27 @@ class BedrockClient:
 
             elif "contentBlockStop" in event:
                 if current_block_type == "tool_use":
+                    input_truncated = False
                     try:
                         parsed_input = (
                             json.loads(current_tool_input_json) if current_tool_input_json else {}
                         )
                     except json.JSONDecodeError:
+                        # Almost always means generation hit maxTokens mid-call.
+                        # Flag it so the agent loop pairs it with an error result
+                        # instead of executing a half-formed call.
                         log.warning(
-                            "Failed to parse tool args JSON for %s: %s",
+                            "Failed to parse tool args JSON for %s (likely max_tokens): %s",
                             current_tool_name,
                             current_tool_input_json[:200],
                         )
                         parsed_input = {}
+                        input_truncated = True
                     yield ToolUseEvent(
                         tool_use_id=current_tool_use_id,
                         name=current_tool_name,
                         input=parsed_input,
+                        input_truncated=input_truncated,
                     )
                 current_block_type = None
 

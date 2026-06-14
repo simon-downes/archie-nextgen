@@ -32,6 +32,18 @@ class TestWriteFile:
         assert "Written" in result
         assert (tmp_path / "src" / "pkg" / "__init__.py").exists()
 
+    def test_append_to_existing_file(self, tmp_path, tool):
+        f = tmp_path / "big.py"
+        f.write_text("part one\n")
+        result = tool.handler({"path": "big.py", "content": "part two\n", "append": True})
+        assert "Appended: big.py (+1 lines)" in result
+        assert f.read_text() == "part one\npart two\n"
+
+    def test_append_to_missing_file_creates_it(self, tmp_path, tool):
+        result = tool.handler({"path": "fresh.py", "content": "hello\n", "append": True})
+        assert "fresh.py" in result
+        assert (tmp_path / "fresh.py").read_text() == "hello\n"
+
     def test_rejects_path_outside_allowed(self, tmp_path, tool):
         result = tool.handler({"path": "/etc/evil.conf", "content": "bad"})
         assert "Error:" in result

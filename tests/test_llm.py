@@ -206,6 +206,38 @@ def test_stream_multiple_tool_calls(mock_client):
     )
 
 
+def test_stream_truncated_tool_args_flagged(mock_client):
+    """Tool args cut off mid-JSON (max_tokens) yield input_truncated=True."""
+    client, runtime = mock_client
+    runtime.converse_stream.return_value = _make_stream_response(
+        [
+            {
+                "contentBlockStart": {
+                    "start": {"toolUse": {"toolUseId": "tu_cut", "name": "write_file"}},
+                    "contentBlockIndex": 0,
+                }
+            },
+            # JSON cut off mid-stream by the output token limit
+            {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"path": "src/big.py", "co'}}}},
+            {"contentBlockStop": {"contentBlockIndex": 0}},
+            {"metadata": {"usage": {"inputTokens": 20, "outputTokens": 10}}},
+            {"messageStop": {"stopReason": "max_tokens"}},
+        ]
+    )
+
+    events = list(
+        client.stream(
+            messages=[_user_turn("write it")],
+            system="test",
+        )
+    )
+
+    assert events[0] == ToolUseEvent(
+        tool_use_id="tu_cut", name="write_file", input={}, input_truncated=True
+    )
+    assert events[-1] == Done(stop_reason="max_tokens")
+
+
 def test_stream_tool_config_passed(mock_client):
     """tool_config is passed to Bedrock as toolConfig."""
     client, runtime = mock_client

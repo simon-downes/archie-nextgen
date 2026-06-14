@@ -37,7 +37,7 @@ class ModelInfo:
     cache_read_price_per_m: float = 0.0
     cache_write_price_per_m: float = 0.0
     context_warning_threshold: float = 0.8
-    max_output_tokens: int = 16_384
+    max_output_tokens: int = 32_768
 
 
 MODELS: dict[str, ModelInfo] = {
