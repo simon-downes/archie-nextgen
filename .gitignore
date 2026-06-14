@@ -12,3 +12,6 @@ wheels/
 
 _research/
 fable/
+
+# archie-generated downloads (web_fetch default location)
+.archie/
