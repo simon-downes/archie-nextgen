@@ -103,6 +103,7 @@ class ArchieApp(App):
         self._clients: dict[str, LLMClient] = {}
         self.llm = self._get_client(self.config.model)
         self.project_dir = detect_project_dir(Path.cwd(), self.config.project_root)
+        self._git_branch = detect_git_branch(self.project_dir)
 
         self._build_stack()
 
@@ -115,7 +116,6 @@ class ArchieApp(App):
         self._turn_active: bool = False
         self._turn_count: int = 0
         self._throbber: Throbber | None = None
-        self._git_branch = detect_git_branch(self.project_dir)
         self._last_esc_time: float = 0.0
         # Incremented on new_session — stale events from old agents are dropped
         self._agent_generation: int = 0
