@@ -80,6 +80,12 @@ def _handle_outline(params: dict, index: CodeIndex, cwd: Path, allowed: list[Pat
     except ValueError as e:
         return tool_error(str(e))
 
+    if resolved.is_dir():
+        return tool_error(
+            f"'{path_str}' is a directory. Use operation='overview' with path='{path_str}' "
+            "to see project structure, or pass a specific file for outline."
+        )
+
     symbols = index.outline(resolved)
     if not symbols:
         return tool_result(f"No symbols found in {path_str} (unsupported language or empty file).")
