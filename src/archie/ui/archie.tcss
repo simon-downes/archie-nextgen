@@ -15,6 +15,7 @@
 /* --- Screen / app chrome --- */
 Screen {
     background: $surface;
+    overflow: hidden;
 }
 
 ProjectHeader {

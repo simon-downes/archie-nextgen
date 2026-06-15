@@ -221,7 +221,7 @@ class ArchieApp(App):
             conv.complete_tool(event.tool_use_id, event.ui_summary, event.is_error, event.ui_detail)
             self._throbber = Throbber()
             conv.mount(self._throbber)
-            conv.scroll_end(animate=False)
+            self.call_after_refresh(conv.scroll_end, animate=False)
 
         elif isinstance(event, UsageUpdated):
             self._update_status_from_event(event)
@@ -259,7 +259,7 @@ class ArchieApp(App):
 
         self._throbber = Throbber()
         conv.mount(self._throbber)
-        conv.scroll_end(animate=False)
+        self.call_after_refresh(conv.scroll_end, animate=False)
 
         self.query_one("#input", MessageInput).disabled = True
         self._stream_text = ""
