@@ -36,4 +36,7 @@ round-trips:
 - Run verification (format + lint + tests) as one combined shell command once
   changes are complete — not piecemeal after each change.
 - A successful edit_file or write_file means the change is applied. Do not
-  re-read the file to verify — the confirmation message is authoritative."""
+  re-read the file to verify — the confirmation message is authoritative.
+
+Implement exactly what is asked — no more. Do not add features, abstractions,
+or "nice to have" improvements unless explicitly requested."""
