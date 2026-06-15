@@ -17,12 +17,13 @@ import logging
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.message import Message
-from textual.widgets import Footer, TabbedContent, TabPane
+from textual.widgets import Footer, Static
 
 from archie.agent import (
     AgentEvent,
@@ -52,6 +53,17 @@ from archie.ui.status import StatusBar, detect_git_branch
 from archie.ui.throbber import Throbber
 
 log = logging.getLogger(__name__)
+
+
+class ProjectHeader(Static):
+    """Top bar showing the current project name."""
+
+    def __init__(self, project_name: str) -> None:
+        super().__init__()
+        self._project_name = project_name
+
+    def compose(self) -> ComposeResult:
+        yield Static(f"📂 {self._project_name}", classes="project-name")
 
 
 # --- Custom Textual Messages ---
@@ -104,6 +116,7 @@ class ArchieApp(App):
         self._turn_count: int = 0
         self._throbber: Throbber | None = None
         self._git_branch = detect_git_branch(self.project_dir)
+        self._last_esc_time: float = 0.0
         # Incremented on new_session — stale events from old agents are dropped
         self._agent_generation: int = 0
 
@@ -161,11 +174,10 @@ class ArchieApp(App):
         )
 
     def compose(self) -> ComposeResult:
-        with TabbedContent():
-            with TabPane("Session 1"):
-                yield Conversation(id="conversation")
-                yield StatusBar(id="status")
-                yield MessageInput(id="input")
+        yield ProjectHeader(self.project_dir.name)
+        yield Conversation(id="conversation")
+        yield StatusBar(id="status")
+        yield MessageInput(id="input")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -367,10 +379,22 @@ class ArchieApp(App):
                 self.notify("Copied to clipboard")
 
     def action_cancel(self) -> None:
-        """Esc — signal the agent to interrupt and kill any running sandbox command."""
+        """Esc — signal the agent to interrupt and kill any running sandbox command.
+
+        When idle (no turn active), double-tap within 500ms clears the input.
+        """
         if self._turn_active:
             self._agent.interrupt()
             self.sandbox.cancel()
+            self._last_esc_time = 0
+        else:
+            now = time.monotonic()
+            inp = self.query_one("#input", MessageInput)
+            if self._last_esc_time and (now - self._last_esc_time) < 0.5 and inp.text:
+                inp.clear()
+                self._last_esc_time = 0
+            else:
+                self._last_esc_time = now
 
     def action_editor(self) -> None:
         """Ctrl+G — compose the prompt in $EDITOR for long/multi-line input.

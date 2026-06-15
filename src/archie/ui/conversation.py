@@ -31,7 +31,7 @@ from archie.ui.colours import BRIGHT_BLUE, BRIGHT_MAGENTA
 class UserMessage(Static):
     """A user message block with highlighted background.
 
-    Uses Textual's Rich markup for the header (▶ You in bold cyan).
+    Uses Textual's Rich markup for the header (▶ You in bold magenta).
     The content is rendered as plain text — users don't write markdown.
     can_focus enables keyboard/click navigation between message blocks.
     """
@@ -53,7 +53,7 @@ class UserMessage(Static):
 
     def compose(self) -> ComposeResult:
         header_text = Text.assemble(
-            (f"▶ You\n", Style(color=BRIGHT_MAGENTA, bold=True)),
+            ("▶ You\n", Style(color=BRIGHT_MAGENTA, bold=True)),
             self._content,
         )
         yield Static(header_text)
@@ -97,7 +97,10 @@ class AssistantMessage(Widget):
         self._content = content
 
     def compose(self):
-        yield Static(Text.from_markup(f"[bright_blue]● Archie[/]"), classes="header")
+        yield Static(
+            Text.assemble(("● Archie", Style(color=BRIGHT_BLUE, bold=True))),
+            classes="header",
+        )
         yield Markdown(self._content)
 
     def get_copy_text(self) -> str:
@@ -150,7 +153,10 @@ class StreamingMessage(Widget):
     text: reactive[str] = reactive("")
 
     def compose(self):
-        yield Static(Text.from_markup(f"[bright_blue]● Archie[/] ⟳"), classes="header")
+        yield Static(
+            Text.assemble(("● Archie", Style(color=BRIGHT_BLUE, bold=True)), (" ⟳")),
+            classes="header",
+        )
         yield Static("", classes="content")
 
     def watch_text(self, value: str) -> None:

@@ -4,46 +4,55 @@
  * Base styling lives in each widget's DEFAULT_CSS (Textual's intended pattern).
  * This file adds:
  *   - Consistent dark-theme colour usage via Textual CSS variables
- *   - Tighter message spacing (border-bottom separators instead of blank lines)
- *   - :focus styling with a left border "cursor bar" (Toad-style)
+ *   - Tighter message spacing (bottom margin gaps, no border separators)
+ *   : UserMessage has a permanent visible left accent bar; other blocks show it on focus
  *   - Layout overrides for the status bar and conversation
  *
  * Textual loads this via CSS_PATH on the App class and merges it with
  * DEFAULT_CSS from individual widgets (this takes higher specificity).
  */
 
-/* --- Global conversation layout --- */
+/* --- Screen / app chrome --- */
+Screen {
+    background: $surface;
+}
+
+ProjectHeader {
+    height: 3;
+    padding: 1 2;
+}
+
+ProjectHeader > .project-name {
+    color: $text-muted;
+    text-style: bold;
+}
+
+/* --- Conversation area (dark) --- */
 Conversation {
     height: 1fr;
     padding: 0;
+    background: black;
 }
 
-/* --- Message blocks: tighter spacing with border-bottom separators ---
- * Instead of margin: 1 0 (which adds blank lines), we use 0 margin and
- * a subtle bottom border to separate messages visually.
- *
- * All blocks have a permanent left border — transparent when unfocused,
- * coloured when focused. This prevents content reflow on focus change
- * (the space is always reserved).
+/* --- Message blocks: tighter spacing, permanent left border on UserMessage ---
+ * All blocks use bottom margin (not border-bottom) for spacing.
+ * UserMessage has a permanent visible left accent bar.
  */
 UserMessage {
-    margin: 0;
-    padding: 1 2;
-    border-bottom: solid $surface-lighten-2;
-    border-left: thick transparent;
+    margin: 0 0 1 0;
+    padding: 0 2;
+    border-left: thick $primary;
 }
 
 AssistantMessage {
-    margin: 0;
-    padding: 1 2;
-    border-bottom: solid $surface-lighten-2;
+    margin: 0 0 1 0;
+    padding: 0 2;
     border-left: thick transparent;
 }
 
 IterationBlock {
-    margin: 0;
-    padding: 1 2;
-    border-bottom: solid $surface-lighten-2;
+    margin: 0 0 1 0;
+    padding: 0 2;
     border-left: thick transparent;
 }
 
@@ -63,61 +72,35 @@ IterationBlock > .tool-body.expanded {
 }
 
 ShellOutput {
-    margin: 0;
-    padding: 1 2;
-    border-bottom: solid $surface-lighten-2;
+    margin: 0 0 1 0;
+    padding: 0 2;
     border-left: thick transparent;
 }
 
 StreamingMessage {
-    margin: 0;
-    padding: 1 2;
-    border-bottom: solid $surface-lighten-2;
+    margin: 0 0 1 0;
+    padding: 0 2;
     border-left: thick transparent;
 }
 
 ErrorMessage {
-    margin: 0;
-    padding: 1 2;
-    border-bottom: solid $surface-lighten-2;
+    margin: 0 0 1 0;
+    padding: 0 2;
     border-left: thick transparent;
 }
 
-/* --- Focus styling: left border "cursor bar" ---
- * When a message block has focus (via click or keyboard navigation),
- * show a thick left border in the primary accent colour. This gives
- * a clear visual indicator of which block is selected (Toad-style).
- */
-UserMessage:focus {
-    border-left: thick $primary;
-}
-
-AssistantMessage:focus {
-    border-left: thick $primary;
-}
-
-IterationBlock:focus {
-    border-left: thick $primary;
-}
-
-ShellOutput:focus {
-    border-left: thick $primary;
-}
-
-StreamingMessage:focus {
-    border-left: thick $primary;
-}
-
-ErrorMessage:focus {
-    border-left: thick $primary;
-}
+/* --- Focus styling: left border "cursor bar" (UserMessage already has it permanently) --- */
+AssistantMessage:focus { border-left: thick $primary; }
+IterationBlock:focus { border-left: thick $primary; }
+ShellOutput:focus { border-left: thick $primary; }
+StreamingMessage:focus { border-left: thick $primary; }
+ErrorMessage:focus { border-left: thick $primary; }
 
 /* --- Status bar layout ---
  * Horizontal container spanning the full width, with left and right sections.
  */
 StatusBar {
     height: 3;
-    background: $surface;
     color: $text-muted;
     padding: 1;
 }
@@ -142,9 +125,8 @@ MessageInput {
     height: 3;
     max-height: 8;
     min-height: 1;
-    margin: 1 0;
+    margin: 0;
     padding: 0 1;
-    background: $surface;
     border: round $surface-lighten-2;
 
     & .text-area--cursor-line {
@@ -160,7 +142,6 @@ MessageInput:focus {
 Footer {
     height: 2;
     padding: 1 0 0 0;
-    background: $surface;
 }
 
 /* --- Throbber: single-line animated bar above the response --- */
