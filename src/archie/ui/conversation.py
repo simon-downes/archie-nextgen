@@ -17,10 +17,15 @@ This two-phase approach avoids re-rendering Markdown on every chunk
 (which would be expensive and cause visual flicker).
 """
 
+from rich.style import Style
+from rich.text import Text
+from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Markdown, Static
+
+from archie.ui.colours import BRIGHT_BLUE, BRIGHT_MAGENTA
 
 
 class UserMessage(Static):
@@ -43,8 +48,15 @@ class UserMessage(Static):
     """
 
     def __init__(self, content: str) -> None:
-        super().__init__(f"[bold cyan]▶ You[/]\n{content}")
         self._content = content
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        header_text = Text.assemble(
+            (f"▶ You\n", Style(color=BRIGHT_MAGENTA, bold=True)),
+            self._content,
+        )
+        yield Static(header_text)
 
     def get_copy_text(self) -> str:
         """Return the plain text content for clipboard copy."""
@@ -85,7 +97,7 @@ class AssistantMessage(Widget):
         self._content = content
 
     def compose(self):
-        yield Static("● Archie", classes="header")
+        yield Static(Text.from_markup(f"[bright_blue]● Archie[/]"), classes="header")
         yield Markdown(self._content)
 
     def get_copy_text(self) -> str:
@@ -138,7 +150,7 @@ class StreamingMessage(Widget):
     text: reactive[str] = reactive("")
 
     def compose(self):
-        yield Static("● Archie ⟳", classes="header")
+        yield Static(Text.from_markup(f"[bright_blue]● Archie[/] ⟳"), classes="header")
         yield Static("", classes="content")
 
     def watch_text(self, value: str) -> None:
