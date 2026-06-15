@@ -86,6 +86,22 @@ def _handle_outline(params: dict, index: CodeIndex, cwd: Path, allowed: list[Pat
             "to see project structure, or pass a specific file for outline."
         )
 
+    if not resolved.is_file():
+        # Suggest files with matching basename
+        basename = Path(path_str).name
+        candidates = [f for f in index._discover_files() if f.name == basename]
+        if candidates:
+            suggestions = []
+            for c in candidates[:3]:
+                try:
+                    suggestions.append(str(c.relative_to(cwd)))
+                except ValueError:
+                    suggestions.append(str(c))
+            return tool_error(
+                f"File not found: {path_str}. Did you mean: {', '.join(suggestions)}?"
+            )
+        return tool_error(f"File not found: {path_str}")
+
     symbols = index.outline(resolved)
     if not symbols:
         return tool_result(f"No symbols found in {path_str} (unsupported language or empty file).")

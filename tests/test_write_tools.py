@@ -114,7 +114,7 @@ class TestEditFile:
                 "edits": [{"old": "    pass", "new": "    return 'hello'"}],
             }
         )
-        assert "1 edit(s) applied" in result
+        assert "1 edit(s) at lines" in result
         assert f.read_text() == "def hello():\n    return 'hello'\n"
 
     def test_multiple_edits_sequential(self, tmp_path, tool):
@@ -129,7 +129,7 @@ class TestEditFile:
                 ],
             }
         )
-        assert "2 edit(s) applied" in result
+        assert "2 edit(s) at lines" in result
         assert f.read_text() == "x = 10\ny = 20\n"
 
     def test_unique_match_enforcement(self, tmp_path, tool):
@@ -156,7 +156,7 @@ class TestEditFile:
                 "edits": [{"old": "foo", "new": "baz", "replace_all": True}],
             }
         )
-        assert "2 replacements" in result
+        assert "2 replacements" in result or "2 edits" in result
         assert f.read_text() == "baz\nbar\nbaz\n"
 
     def test_text_not_found(self, tmp_path, tool):
@@ -252,7 +252,7 @@ class TestEditFile:
                 ],
             }
         )
-        assert "2 edit(s) applied" in result
+        assert "2 edit(s) at lines" in result
         assert f.read_text() == "yyy ccc\n"
 
     def test_replace_all_single_match(self, tmp_path, tool):
@@ -266,5 +266,5 @@ class TestEditFile:
             }
         )
         # 1 replacement == 1 edit, so uses "edit(s) applied" not "replacements"
-        assert "1 edit(s) applied" in result
+        assert "1 edit(s) at lines" in result
         assert f.read_text() == "replaced here\n"

@@ -95,7 +95,7 @@ class Sandbox:
                 "--user",
                 f"{self.uid}:{self.uid}",
                 "-w",
-                str(self.project_dir),
+                "/workspace",
             ]
 
             # Add volume mounts
@@ -155,7 +155,7 @@ class Sandbox:
             "docker",
             "exec",
             "-w",
-            str(self.project_dir),
+            "/workspace",
             self.container_name,
             "bash",
             "-c",
@@ -222,7 +222,7 @@ class Sandbox:
         mounts = []
 
         # Project directory — always mounted (it must exist, it's our cwd)
-        mounts.append(f"{self.project_dir}:{self.project_dir}:rw")
+        mounts.append(f"{self.project_dir}:/workspace:rw")
 
         # Standard read-only mounts (skip if they don't exist on host)
         ro_paths = [

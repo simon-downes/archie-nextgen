@@ -164,7 +164,7 @@ class ArchieApp(App):
             llm_client=self.llm,
             session=self.session,
             tool_registry=self.tool_registry,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SYSTEM_PROMPT + self._build_env_block(),
             emit=self._on_agent_event,
             sandbox=self.sandbox,
             artifact_store=self.artifact_store,
@@ -172,6 +172,20 @@ class ArchieApp(App):
             cwd=self.project_dir,
             pre_content_stash=self.pre_content_stash,
         )
+
+    def _build_env_block(self) -> str:
+        """Build the dynamic environment block appended to the system prompt."""
+        return f"""\n## Environment
+
+- Project: {self.project_dir.name}
+- Working directory: /workspace (Docker sandbox, Debian Linux)
+- Python interpreter: python3 (available globally in sandbox)
+- Git branch: {self._git_branch}
+- File tools: use relative paths from project root (e.g. src/archie/ui/app.py)
+- Shell: executes in /workspace — do not cd elsewhere
+- Prefer provided tools (read_file, edit_file, search_files, code) over shell equivalents
+  (cat, sed, grep, find). Use shell only for running commands, tests, and git.
+"""
 
     def compose(self) -> ComposeResult:
         yield ProjectHeader(self.project_dir.name)

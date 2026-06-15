@@ -78,6 +78,7 @@ def make_edit_file_spec(
         # Apply edits sequentially — each edit operates on the result of the previous.
         # If any edit fails, we bail out without writing (atomic guarantee).
         total_replacements = 0
+        edit_lines: list[str] = []
         for i, edit in enumerate(edits):
             old = edit["old"]
             new = edit["new"]
@@ -103,9 +104,18 @@ def make_edit_file_spec(
                 )
 
             if replace_all:
+                # Record first occurrence line
+                idx = content.index(old)
+                start_line = content[:idx].count("\n") + 1
+                end_line = start_line + old.count("\n")
+                edit_lines.append(f"{start_line}-{end_line}" if end_line > start_line else str(start_line))
                 content = content.replace(old, new)
                 total_replacements += count
             else:
+                idx = content.index(old)
+                start_line = content[:idx].count("\n") + 1
+                end_line = start_line + old.count("\n")
+                edit_lines.append(f"{start_line}-{end_line}" if end_line > start_line else str(start_line))
                 content = content.replace(old, new, 1)
                 total_replacements += 1
 
@@ -121,12 +131,13 @@ def make_edit_file_spec(
         for k in stale_keys:
             del mtime_cache[k]
 
-        # Confirmation message
+        # Confirmation message with line references
         edit_count = len(edits)
+        lines_str = ", ".join(edit_lines)
         if total_replacements > edit_count:
-            detail = f"{edit_count} edit(s), {total_replacements} replacements"
+            detail = f"{edit_count} edits, {total_replacements} replacements at lines {lines_str}"
         else:
-            detail = f"{edit_count} edit(s) applied"
+            detail = f"{edit_count} edit(s) at lines {lines_str}"
         return tool_result(f"Edited: {path_str} ({detail})")
 
     return ToolSpec(

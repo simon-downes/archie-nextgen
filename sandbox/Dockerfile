@@ -43,7 +43,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # --- uv (Python package manager + Python installer) ---
 # uv is used both to install Python and manage packages inside the sandbox
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-RUN uv python install 3.14
+RUN UV_PYTHON_INSTALL_DIR=/usr/local uv python install && \
+    PYTHON_PATH=$(find /usr/local -name "cpython-*" -type d | head -1) && \
+    ln -s "$PYTHON_PATH/bin/python3" /usr/local/bin/python3 && \
+    ln -s /usr/local/bin/python3 /usr/local/bin/python
 
 # Install jq
 RUN curl -L "https://github.com/jqlang/jq/releases/latest/download/jq-linux-${TARGETARCH}" \
@@ -138,6 +141,10 @@ RUN curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/in
 RUN groupadd -g ${USER_UID} ${USERNAME} && \
     useradd -m -u ${USER_UID} -g ${USER_UID} -s /bin/bash ${USERNAME} && \
     echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# --- Create project mount point ---
+RUN mkdir /workspace
+WORKDIR /workspace
 
 USER ${USERNAME}
 

@@ -54,7 +54,7 @@ class TestEnsureRunning:
         assert "--user" in cmd
         assert "1000:1000" in cmd
         assert "-w" in cmd
-        assert str(sandbox.project_dir) in cmd
+        assert "/workspace" in cmd
         assert cmd[-2:] == ["sleep", "infinity"]
 
     @patch("archie.sandbox.subprocess.run")
@@ -65,7 +65,7 @@ class TestEnsureRunning:
         sandbox.ensure_running()
 
         cmd = mock_run.call_args[0][0]
-        expected_mount = f"{sandbox.project_dir}:{sandbox.project_dir}:rw"
+        expected_mount = f"{sandbox.project_dir}:/workspace:rw"
         assert expected_mount in cmd
 
     @patch("archie.sandbox.Path.home")

@@ -86,6 +86,10 @@ class ToolRegistry:
             for spec in self._tools.values()
         ]
 
+# Container project root — paths under this prefix are translated to host paths
+# when file tools execute outside the sandbox (e.g. in tests, local reads).
+CONTAINER_PROJECT_ROOT = "/workspace"
+
 
 def validate_path(path: str, cwd: Path, allowed: list[Path]) -> Path:
     """Resolve a path and verify it's under an allowed directory.
@@ -104,7 +108,14 @@ def validate_path(path: str, cwd: Path, allowed: list[Path]) -> Path:
     Raises:
         ValueError: If the path is outside all allowed directories.
     """
-    resolved = Path(path).resolve() if Path(path).is_absolute() else (cwd / path).resolve()
+    # Translate container paths to host paths
+    if path == CONTAINER_PROJECT_ROOT:
+        resolved = cwd.resolve()
+    elif path.startswith(CONTAINER_PROJECT_ROOT + "/"):
+        relative = path[len(CONTAINER_PROJECT_ROOT) + 1:]
+        resolved = (cwd / relative).resolve()
+    else:
+        resolved = Path(path).resolve() if Path(path).is_absolute() else (cwd / path).resolve()
 
     # Check if the resolved path is under any allowed directory
     allowed_dirs = [cwd.resolve()] + [p.resolve() for p in allowed]
