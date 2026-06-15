@@ -1,6 +1,7 @@
 """Status bar widget with project info and metrics.
 
-Shows: model │ in:fresh/cache_read/cache_write out:output │ ctx:N% │ $cost │ project ⎇ branch
+Shows: model │ in:fresh/cache_read/cache_write out:output │ ctx:N% │ $cost │ session_id ⎇ branch
+       (cache columns hidden for non-cache models; "Local" shown instead of $0 for free models)
 
 Token counts are session totals (lifetime, only climb). While streaming, output
 shows a ~N estimate (chars/4) that snaps to the real value when UsageUpdated arrives.
@@ -10,10 +11,22 @@ Git branch is read directly from .git/HEAD (no subprocess spawn).
 import logging
 from pathlib import Path
 
+from rich.text import Text
 from textual.containers import Horizontal
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
+
+from archie.ui.colours import (
+    BRIGHT_BLUE,
+    BRIGHT_GREEN,
+    BRIGHT_MAGENTA,
+    BRIGHT_RED,
+    BRIGHT_WHITE,
+    BRIGHT_YELLOW,
+    GREEN,
+    YELLOW,
+)
 
 log = logging.getLogger(__name__)
 
@@ -46,12 +59,15 @@ class StatusBar(Widget):
     cache_read: reactive[int] = reactive(0)
     cache_write: reactive[int] = reactive(0)
     context_pct: reactive[float] = reactive(0.0)
-    cost: reactive[float] = reactive(0.0)
     warning: reactive[bool] = reactive(False)
 
     # Right section
-    project_name: reactive[str] = reactive("—")
+    session_id: reactive[str] = reactive("—")
     git_branch: reactive[str] = reactive("—")
+
+    # Model capability flags
+    supports_cache: reactive[bool] = reactive(True)
+    pricing_label: reactive[str] = reactive("$cost")
 
     # Streaming output estimate
     _output_estimate: reactive[int] = reactive(0)
@@ -99,10 +115,13 @@ class StatusBar(Widget):
     def _watch_context_pct(self) -> None:
         self._refresh_display()
 
-    def _watch_cost(self) -> None:
+    def _watch_session_id(self) -> None:
         self._refresh_display()
 
-    def _watch_project_name(self) -> None:
+    def _watch_supports_cache(self) -> None:
+        self._refresh_display()
+
+    def _watch_pricing_label(self) -> None:
         self._refresh_display()
 
     def _watch_git_branch(self) -> None:
@@ -119,21 +138,35 @@ class StatusBar(Widget):
         # Output: show ~estimate while streaming, real value otherwise
         out_display = f"~{self._output_estimate}" if self._estimating else str(self.session_output)
 
-        # Context percentage with warning highlight
-        ctx = (
-            f"[bold red]ctx:{self.context_pct:.0f}%[/]"
-            if self.warning
-            else f"ctx:{self.context_pct:.0f}%"
-        )
+        # Input format: include cache columns only when caching is supported
+        if self.supports_cache:
+            in_val = (
+                f"[{GREEN}]{_fmt(self.session_input)}[/]"
+                f" / [{GREEN}]{_fmt(self.cache_read)}[/]"
+                f" / [{GREEN}]{_fmt(self.cache_write)}[/]"
+            )
+        else:
+            in_val = f"[{GREEN}]{_fmt(self.session_input)}[/]"
+
+        # Context percentage with color progression
+        if self.warning or self.context_pct > 85:
+            ctx_val = f"[bold {BRIGHT_RED}]{self.context_pct:.0f}%[/]"
+        elif self.context_pct >= 60:
+            ctx_val = f"[bold {BRIGHT_YELLOW}]{self.context_pct:.0f}%[/]"
+        else:
+            ctx_val = f"[{BRIGHT_WHITE}]{self.context_pct:.0f}%[/]"
 
         left.update(
-            f" {self.model_name}"
-            f" │ in:{_fmt(self.session_input)}/{_fmt(self.cache_read)}/{_fmt(self.cache_write)}"
-            f" out:{out_display}"
-            f" │ {ctx}"
-            f" │ ${self.cost:.4f}"
+            Text.from_markup(
+                f" [{BRIGHT_BLUE}]{self.model_name}[/]"
+                f" ⎇  [{BRIGHT_MAGENTA}]{self.git_branch}[/]"
+                f" │ In: {in_val}"
+                f"  Out: [{BRIGHT_GREEN}]{out_display}[/]"
+                f" │ Ctx: {ctx_val}"
+                f" │ [{YELLOW}]{self.pricing_label}[/]"
+            )
         )
-        right.update(f"{self.project_name} ⎇ {self.git_branch} ")
+        right.update(Text.from_markup(f"{self.session_id} "))
 
 
 def _fmt(n: int) -> str:

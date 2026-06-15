@@ -37,7 +37,7 @@ from archie.agent import (
 )
 from archie.artifact_store import ArtifactStore
 from archie.config import load_config
-from archie.llm import BedrockClient
+from archie.llm import BedrockClient, LLMClient, get_ollama_client_class
 from archie.logs import log_event
 from archie.models import get_model_info
 from archie.project import detect_project_dir
@@ -88,13 +88,8 @@ class ArchieApp(App):
 
         self.config = load_config()
         self.model_info = get_model_info(self.config.model)
-        self.llm = BedrockClient(
-            model_id=self.config.model,
-            # Models with an in-region-only endpoint pin their own region;
-            # geo-inference models fall back to the configured session region.
-            region=self.model_info.region or self.config.region,
-            max_output_tokens=self.model_info.max_output_tokens,
-        )
+        self._clients: dict[str, LLMClient] = {}
+        self.llm = self._get_client(self.config.model)
         self.project_dir = detect_project_dir(Path.cwd(), self.config.project_root)
 
         self._build_stack()
@@ -317,7 +312,7 @@ class ArchieApp(App):
     def _update_status(self) -> None:
         """Push current stats to the status bar widget."""
         status = self.query_one("#status", StatusBar)
-        status.project_name = self.project_dir.name
+        status.session_id = self.session.session_id
         status.git_branch = self._git_branch
         status.model_name = self.model_info.name
         status.session_input = self.session.total_input_tokens
@@ -325,7 +320,8 @@ class ArchieApp(App):
         status.cache_read = self.session.total_cache_read_tokens
         status.cache_write = self.session.total_cache_write_tokens
         status.context_pct = self.session.context_pct
-        status.cost = self.session.total_cost
+        status.pricing_label = f"${self.session.total_cost:.4f}"
+        status.supports_cache = self.model_info.supports_cache
         status.warning = self.session.context_warning
 
     def _update_status_from_event(self, event: UsageUpdated) -> None:
@@ -335,7 +331,7 @@ class ArchieApp(App):
         status.session_output = event.output_tokens
         status.cache_read = event.cache_read_tokens
         status.cache_write = event.cache_write_tokens
-        status.cost = event.cost
+        status.pricing_label = f"${event.cost:.4f}"
         status.context_pct = self.session.context_pct
         status.warning = self.session.context_warning
         status.clear_estimate()
@@ -449,6 +445,30 @@ class ArchieApp(App):
         """
         log_event(log, logging.ERROR, "unhandled_exception", exc_info=True, error=str(error)[:500])
 
+    def _get_client(self, model_id: str) -> LLMClient:
+        """Get or create an LLM client for the given model, based on its provider."""
+        info = get_model_info(model_id)
+        provider = info.provider
+
+        if provider not in self._clients:
+            if provider == "ollama":
+                self._clients[provider] = get_ollama_client_class()(
+                    model_id=model_id,
+                    host=self.config.ollama.host,
+                    timeout=self.config.ollama.timeout,
+                    max_context_tokens=info.max_context_tokens,
+                )
+            else:
+                self._clients[provider] = BedrockClient(
+                    model_id=model_id,
+                    region=info.region or self.config.region,
+                    max_output_tokens=info.max_output_tokens,
+                )
+        else:
+            self._clients[provider].model_id = model_id
+
+        return self._clients[provider]
+
     def switch_model(self, model_id: str) -> None:
         """Switch to a different model mid-session. Takes effect on the next turn.
 
@@ -457,8 +477,17 @@ class ArchieApp(App):
         """
         from archie.models import get_model_info
 
+        old_provider = self.model_info.provider
         self.model_info = get_model_info(model_id)
-        self.llm.model_id = model_id
+
+        if self.model_info.provider == old_provider:
+            # Same provider — just swap the model ID on the existing client
+            self.llm.model_id = model_id
+        else:
+            # Different provider — get or create the appropriate client
+            self.llm = self._get_client(model_id)
+            self._agent.llm = self.llm
+
         self.session.model_info = self.model_info
-        self.query_one("#status", StatusBar).model_name = self.model_info.name
+        self._update_status()
         self.notify(f"Switched to {self.model_info.name}")

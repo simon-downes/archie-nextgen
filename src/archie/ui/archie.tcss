@@ -116,37 +116,51 @@ ErrorMessage:focus {
  * Horizontal container spanning the full width, with left and right sections.
  */
 StatusBar {
-    height: 1;
+    height: 3;
     background: $surface;
     color: $text-muted;
+    padding: 1;
 }
 
 StatusBar #status-left {
     width: 1fr;
-    padding: 0 2;
+    padding: 0;
+    color: auto;
 }
 
 StatusBar #status-right {
     width: auto;
-    padding: 0 2;
+    padding: 0;
     text-align: right;
+    color: auto;
 }
 
 /* --- Input styling ---
- * Subtle border that highlights on focus.
+ * Edge-to-edge with subtle border, no surrounding gaps.
  */
 MessageInput {
-    height: auto;
+    height: 3;
     max-height: 8;
     min-height: 1;
-    margin: 1 2;
+    margin: 0;
     padding: 0 1;
     background: $surface;
     border: round $surface-lighten-2;
+
+    & .text-area--cursor-line {
+        background: $surface;
+    }
 }
 
 MessageInput:focus {
     border: round $primary;
+}
+
+/* --- Footer: hotkey bar --- */
+Footer {
+    height: 2;
+    padding: 1 0 0 0;
+    background: $surface;
 }
 
 /* --- Throbber: single-line animated bar above the response --- */

@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from archie.artifact_store import ArtifactStore
-from archie.llm import BedrockClient, Done, ToolUseEvent, Usage
+from archie.llm import Done, LLMClient, ToolUseEvent, Usage
 from archie.llm import TextDelta as LlmTextDelta
 from archie.logs import bind, clear, log_event
 from archie.session import Session, Turn, TurnLog, summarise_tool_output
@@ -161,7 +161,7 @@ class AgentLoop:
 
     def __init__(
         self,
-        llm_client: BedrockClient,
+        llm_client: LLMClient,
         session: Session,
         tool_registry: ToolRegistry,
         system_prompt: str,

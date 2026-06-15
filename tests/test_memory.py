@@ -99,7 +99,7 @@ class TestMemoryExtractor:
 
         # Should only process the second turn (after watermark)
         call_args = extractor._client.invoke.call_args
-        user_text = call_args[0][0][0]["content"][0]["text"]
+        user_text = call_args[0][0][0].content[0].text
         assert "second" in user_text
         assert "first" not in user_text
 
@@ -227,7 +227,7 @@ class TestMemoryExtractor:
         extractor.extract_all()
 
         call_args = extractor._client.invoke.call_args
-        user_text = call_args[0][0][0]["content"][0]["text"]
+        user_text = call_args[0][0][0].content[0].text
         assert "old topic" in user_text
         assert "old content" in user_text
 

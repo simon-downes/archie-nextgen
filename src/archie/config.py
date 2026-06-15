@@ -61,6 +61,19 @@ class SandboxConfig:
 
 
 @dataclass(frozen=True)
+class OllamaConfig:
+    """Configuration for the Ollama local model provider.
+
+    Attributes:
+        host: Ollama server URL.
+        timeout: Request timeout in seconds (generation can be slow on large models).
+    """
+
+    host: str = "http://localhost:11434"
+    timeout: int = 120
+
+
+@dataclass(frozen=True)
 class MemoryConfig:
     """Configuration for the memory extraction system.
 
@@ -86,6 +99,7 @@ class Config:
     brain_dir: Path = field(default_factory=lambda: Path.home() / ".archie" / "new-brain")
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
+    ollama: OllamaConfig = field(default_factory=OllamaConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
 
 
@@ -145,6 +159,13 @@ def load_config() -> Config:
         extraction_interval=memory_raw.get("extraction_interval", 5),
     )
 
+    # Parse ollama config
+    ollama_raw = raw.get("ollama", {}) or {}
+    ollama_config = OllamaConfig(
+        host=ollama_raw.get("host", "http://localhost:11434"),
+        timeout=ollama_raw.get("timeout", 120),
+    )
+
     return Config(
         model=model,
         region=region,
@@ -152,5 +173,6 @@ def load_config() -> Config:
         brain_dir=brain_dir,
         tools=tools_config,
         sandbox=sandbox_config,
+        ollama=ollama_config,
         memory=memory_config,
     )

@@ -254,11 +254,11 @@ class BedrockClient:
             aws_request_id=request_id,
         )
 
-    def invoke(self, messages: list[dict], system: str) -> str:
+    def invoke(self, messages: list[Turn], system: str) -> str:
         """Non-streaming call using boto3 converse(). Returns the response text."""
         params = {
             "modelId": self.model_id,
-            "messages": messages,
+            "messages": _turns_to_bedrock_messages(messages),
             "system": [{"text": system}],
         }
         for attempt in range(3):

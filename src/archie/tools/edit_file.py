@@ -40,6 +40,17 @@ def make_edit_file_spec(
         path_str = params["path"]
         edits = params["edits"]
 
+        # Normalise: some models double-encode the edits array as a JSON string
+        if isinstance(edits, str):
+            import json
+
+            try:
+                edits = json.loads(edits)
+            except (json.JSONDecodeError, TypeError):
+                return tool_error("edits must be a JSON array of {old, new} objects")
+        if not isinstance(edits, list):
+            return tool_error("edits must be a JSON array of {old, new} objects")
+
         # Security: enforce path allowlist
         try:
             resolved = validate_path(path_str, cwd, allowed_directories)

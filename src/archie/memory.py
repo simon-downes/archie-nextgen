@@ -20,6 +20,8 @@ from ulid import ULID
 from archie.config import SESSIONS_DIR
 from archie.llm.bedrock import BedrockClient
 from archie.models import MODELS
+from archie.session import Turn
+from archie.types import TextBlock
 
 log = logging.getLogger(__name__)
 
@@ -169,7 +171,7 @@ class MemoryExtractor:
         system = _EXTRACTION_PROMPT
         user_content = f"{context_text}Extract knowledge fragments from these conversation turns:\n\n{turns_text}"
 
-        messages = [{"role": "user", "content": [{"text": user_content}]}]
+        messages = [Turn(id="", role="user", content=[TextBlock(text=user_content)])]
 
         try:
             response_text = self._client.invoke(messages, system)

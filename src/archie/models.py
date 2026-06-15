@@ -35,6 +35,7 @@ class ModelInfo:
             models without geo/global inference profiles (in-region endpoints
             only). Geo-inference models (the eu. Claude profiles) leave this
             None and use the configured session region.
+        supports_cache: Whether this model supports Bedrock prompt caching.
     """
 
     name: str
@@ -46,6 +47,8 @@ class ModelInfo:
     context_warning_threshold: float = 0.8
     max_output_tokens: int = 32_768
     region: str | None = None
+    provider: str = "bedrock"
+    supports_cache: bool = True
 
 
 MODELS: dict[str, ModelInfo] = {
@@ -90,9 +93,6 @@ MODELS: dict[str, ModelInfo] = {
         cache_write_price_per_m=18.75,
     ),
     # --- Non-Anthropic models ---
-    # In-region endpoints only (no geo/global inference profile), so the model
-    # ID is used as-is with no eu./us. prefix. Bedrock prompt caching is not
-    # offered for these, so cache prices stay at 0.0.
     "zai.glm-5": ModelInfo(
         name="GLM 5",
         max_context_tokens=200_000,
@@ -100,6 +100,7 @@ MODELS: dict[str, ModelInfo] = {
         input_price_per_m=1.55,
         output_price_per_m=4.96,
         region="eu-west-2",  # London — in-region endpoint only
+        supports_cache=False,
     ),
     "qwen.qwen3-coder-next": ModelInfo(
         name="Qwen3 Coder Next",
@@ -108,6 +109,7 @@ MODELS: dict[str, ModelInfo] = {
         input_price_per_m=0.60,
         output_price_per_m=1.44,
         region="eu-west-1",  # Ireland — cheaper region, in-region endpoint only
+        supports_cache=False,
     ),
     "moonshotai.kimi-k2.5": ModelInfo(
         name="Kimi K2.5",
@@ -116,6 +118,26 @@ MODELS: dict[str, ModelInfo] = {
         input_price_per_m=0.72,
         output_price_per_m=3.60,
         region="eu-west-2",  # London — in-region endpoint only
+        supports_cache=False,
+    ),
+    # --- Ollama local models ---
+    "qwen3.6:35b": ModelInfo(
+        name="Qwen 3.6 35B",
+        max_context_tokens=128_000,
+        max_output_tokens=16_000,
+        input_price_per_m=0.0,
+        output_price_per_m=0.0,
+        provider="ollama",
+        supports_cache=False,
+    ),
+    "gemma4:31b": ModelInfo(
+        name="Gemma 4 31B",
+        max_context_tokens=128_000,
+        max_output_tokens=16_000,
+        input_price_per_m=0.0,
+        output_price_per_m=0.0,
+        provider="ollama",
+        supports_cache=False,
     ),
 }
 
