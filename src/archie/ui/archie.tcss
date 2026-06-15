@@ -40,7 +40,7 @@ AssistantMessage {
     border-left: thick transparent;
 }
 
-ToolCallMessage {
+IterationBlock {
     margin: 0;
     padding: 1 2;
     border-bottom: solid $surface-lighten-2;
@@ -52,13 +52,13 @@ ToolCallMessage {
  * "expanded" class shows it. This keeps tool-heavy sessions clean
  * while allowing users to inspect details on demand.
  */
-ToolCallMessage > .tool-body {
+IterationBlock > .tool-body {
     display: none;
     height: auto;
     margin: 1 0 0 2;
 }
 
-ToolCallMessage > .tool-body.expanded {
+IterationBlock > .tool-body.expanded {
     display: block;
 }
 
@@ -96,7 +96,7 @@ AssistantMessage:focus {
     border-left: thick $primary;
 }
 
-ToolCallMessage:focus {
+IterationBlock:focus {
     border-left: thick $primary;
 }
 
@@ -142,7 +142,7 @@ MessageInput {
     height: 3;
     max-height: 8;
     min-height: 1;
-    margin: 0;
+    margin: 1 0;
     padding: 0 1;
     background: $surface;
     border: round $surface-lighten-2;

@@ -260,7 +260,7 @@ def _escape(text: str) -> str:
 class ShellOutput(Widget):
     """Display widget for user-initiated ! shell commands.
 
-    Visually distinct from ToolCallMessage — this is for direct user commands
+    Visually distinct from IterationBlock — this is for direct user commands
     (not model tool calls). Shows a $ prefix, exit code, and monospace output.
     Output is capped at 2000 chars to prevent the conversation from being
     overwhelmed by verbose command output.
