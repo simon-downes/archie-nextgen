@@ -123,7 +123,7 @@ StatusBar #status-right {
  * Edge-to-edge with subtle border, no surrounding gaps.
  */
 MessageInput {
-    height: 3;
+    height: auto;
     max-height: 8;
     min-height: 1;
     margin: 0;
