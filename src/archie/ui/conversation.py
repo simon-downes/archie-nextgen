@@ -368,7 +368,7 @@ class Conversation(VerticalScroll):
 
     def add_assistant_message(self, content: str) -> None:
         """Add a complete assistant message (used for session replay, not streaming)."""
-        self.mount(AssistantMessage(content))
+        self.mount(AssistantMessage(content.rstrip('\n')))
         self.scroll_end(animate=False)
 
     def add_tool_call(self, name: str, args: dict, result: str, is_error: bool) -> None:
@@ -426,7 +426,7 @@ class Conversation(VerticalScroll):
         Uses mount(before=) + remove() to avoid a flash from the layout gap
         that would occur if we removed first then mounted.
         """
-        final = AssistantMessage(streaming.text)
+        final = AssistantMessage(streaming.text.rstrip('\n'))
         self.mount(final, before=streaming)
         streaming.remove()
         self.scroll_end(animate=False)
