@@ -34,4 +34,6 @@ round-trips:
   read_file only for content you will edit or quote, with offset/limit to
   target the region you need.
 - Run verification (format + lint + tests) as one combined shell command once
-  changes are complete — not piecemeal after each change."""
+  changes are complete — not piecemeal after each change.
+- A successful edit_file or write_file means the change is applied. Do not
+  re-read the file to verify — the confirmation message is authoritative."""
