@@ -198,6 +198,7 @@ def create_default_registry(
     from archie.tools.read_file import make_read_file_spec
     from archie.tools.search_files import make_search_files_spec
     from archie.tools.web_fetch import make_web_fetch_spec
+    from archie.tools.web_search import make_web_search_spec
     from archie.tools.write_file import make_write_file_spec
 
     registry = ToolRegistry()
@@ -218,6 +219,7 @@ def create_default_registry(
     registry.register(make_edit_file_spec(cwd, allowed_directories, mtime_cache, pre_content_stash))
     registry.register(make_code_spec(cwd, allowed_directories))
     registry.register(make_web_fetch_spec(cwd, allowed_directories))
+    registry.register(make_web_search_spec())
 
     # Shell tool: only registered if a sandbox is available.
     # The sandbox provides the execution environment (Docker container).
