@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 
 # Default connection settings
 _DEFAULT_HOST = "http://localhost:11434"
-_DEFAULT_TIMEOUT = 120.0
+_DEFAULT_TIMEOUT = 240.0
 
 
 def _turns_to_ollama_messages(turns: list[Turn], system: str) -> list[dict]:
