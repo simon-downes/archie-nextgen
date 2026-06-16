@@ -127,7 +127,17 @@ def _handle_search(params: dict, index: CodeIndex, cwd: Path) -> str:
     if not name:
         return tool_error("'name' is required for search operation.")
 
-    path = Path(params["path"]) if params.get("path") else None
+    path_str = params.get("path", "")
+    if path_str:
+        from archie.tools import CONTAINER_PROJECT_ROOT
+
+        if path_str == CONTAINER_PROJECT_ROOT or path_str.startswith(CONTAINER_PROJECT_ROOT + "/"):
+            relative = path_str[len(CONTAINER_PROJECT_ROOT):].lstrip("/")
+            path = Path(relative) if relative else None
+        else:
+            path = Path(path_str)
+    else:
+        path = None
     language = params.get("language")
 
     results = index.search(name, path, language)
@@ -146,7 +156,18 @@ def _handle_search(params: dict, index: CodeIndex, cwd: Path) -> str:
 
 
 def _handle_overview(params: dict, index: CodeIndex, cwd: Path) -> str:
-    path = Path(params["path"]) if params.get("path") else None
+    path_str = params.get("path", "")
+    if path_str:
+        from archie.tools import CONTAINER_PROJECT_ROOT
+
+        if path_str == CONTAINER_PROJECT_ROOT or path_str.startswith(CONTAINER_PROJECT_ROOT + "/"):
+            # Strip /workspace prefix — CodeIndex uses host-relative paths
+            relative = path_str[len(CONTAINER_PROJECT_ROOT):].lstrip("/")
+            path = Path(relative) if relative else None
+        else:
+            path = Path(path_str)
+    else:
+        path = None
     data = index.overview(path)
 
     languages = data["languages"]
