@@ -188,14 +188,24 @@ def _handle_overview(params: dict, index: CodeIndex, cwd: Path) -> str:
     lines.append(f"Languages: {', '.join(lang_parts)}")
     lines.append("")
 
-    # Directory structure with symbols
+    # Directory structure with symbols (limit depth and count for large projects)
+    max_dirs = 50
+    max_depth = 3
+    shown = 0
     for dir_path in sorted(directories.keys()):
+        # Skip deeply nested directories
+        if len(dir_path.parts) > max_depth:
+            continue
+        if shown >= max_dirs:
+            lines.append(f"  ... and {len(directories) - shown} more directories")
+            break
         syms = directories[dir_path]
         dir_str = str(dir_path) if str(dir_path) != "." else cwd.name
         sym_summary = ", ".join(syms[:5])
         if len(syms) > 5:
             sym_summary += f" (+{len(syms) - 5} more)"
         lines.append(f"  {dir_str}/ — {sym_summary}")
+        shown += 1
 
     return tool_result("\n".join(lines))
 
