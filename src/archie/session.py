@@ -268,5 +268,12 @@ def summarise_tool_output(name: str, tool_input: dict, output: str, is_error: bo
             exit_line = next((line for line in lines if "[exit:" in line), "[exit: ?]")
             output_lines = max(0, len(lines) - 2)
             return f"{exit_line.strip()}, {output_lines} lines"
+        case "web_search":
+            count = len([l for l in output.split("\n\n") if l.strip()])
+            return f"{count} results"
+        case "web_fetch":
+            if "Saved to:" in output:
+                return "saved to file"
+            return f"{len(output.splitlines())} lines"
         case _:
             return f"{len(output)} chars"

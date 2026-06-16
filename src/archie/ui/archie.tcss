@@ -86,8 +86,8 @@ StreamingMessage {
 
 ErrorMessage {
     margin: 0 0 1 0;
-    padding: 0 2;
-    border-left: thick transparent;
+    padding: 1 2;
+    border-left: thick $error-darken-3;
 }
 
 /* --- Focus styling: left border "cursor bar" (UserMessage already has it permanently) --- */

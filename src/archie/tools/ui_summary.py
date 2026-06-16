@@ -138,6 +138,34 @@ def _debug_record_count(result: str) -> int:
     return sum(1 for line in result.split("\n") if line.strip().startswith("{"))
 
 
+def _overview_summary(result: str) -> tuple[int, list[tuple[str, int]]]:
+    """Extract total file count and language breakdown from code overview result.
+
+    Returns (total_files, [(lang, pct), ...]) or (0, []) for empty results.
+    """
+    total = 0
+    langs: list[tuple[str, int]] = []
+    for line in result.split("\n")[:4]:
+        stripped = line.strip()
+        if stripped.startswith("Files:") and "source file" in stripped:
+            try:
+                total = int(stripped.split()[1])
+            except (IndexError, ValueError):
+                pass
+        elif stripped.startswith("Languages:"):
+            after = stripped.removeprefix("Languages: ").strip()
+            if after:
+                for part in after.split(", "):
+                    part = part.strip().lower()
+                    try:
+                        pct = int(part.rsplit("(")[1].rstrip("%)"))
+                        lang = part.split(" (")[0]
+                        langs.append((lang, pct))
+                    except (IndexError, ValueError):
+                        pass
+    return total, langs
+
+
 # --- read_file helpers ---
 
 
@@ -256,6 +284,14 @@ def format_tool_pending(name: str, params: dict, cwd: Path) -> str:
         case "self_debug":
             return "Debug log"
 
+        case "web_search":
+            query = params.get("query", "")
+            return f"Web search {_hi(query)}"
+
+        case "web_fetch":
+            url = params.get("url", "")
+            return f"Fetch {_dim(url)}"
+
         case _:
             return _esc(name)
 
@@ -357,7 +393,15 @@ def format_tool_complete(name: str, params: dict, result: str, is_error: bool, c
                     return f"Code search {_hi(name_param)} {_dim(f'({count} results)')}"
                 case "overview":
                     path = _rel_path(params.get("path", "."), cwd)
-                    return f"Code overview {_hi(path)}"
+                    total, langs = _overview_summary(result)
+                    if total == 0:
+                        return f"Code overview {_hi(path)}"
+                    lang_parts = [f"{pct}% {lang.capitalize()}" for lang, pct in langs[:3]]
+                    suffix = ", ".join(lang_parts) if lang_parts else ""
+                    base = f"Code overview {_hi(path)} ({total} files"
+                    if suffix:
+                        return f"{base} - {suffix})"
+                    return f"{base})"
                 case _:
                     return f"Code {_esc(op)}"
 
@@ -412,6 +456,22 @@ def format_tool_complete(name: str, params: dict, result: str, is_error: bool, c
             if level and level.upper() != "DEBUG":
                 return f"Debug log {_dim(f'[{level.upper()}]')} {_dim(f'({count} records)')}"
             return f"Debug log {_dim(f'({count} records)')}"
+
+        case "web_search":
+            query = params.get("query", "")
+            if "No results found" in result:
+                return f"Web search {_hi(query)} {_dim('(no results)')}"
+            count = len([l for l in result.split("\n\n") if l.strip()])
+            return f"Web search {_hi(query)} {_dim(f'({count} results)')}"
+
+        case "web_fetch":
+            url = params.get("url", "")
+            if "Saved to:" in result:
+                parts = result.split("Saved to:")
+                saved_path = parts[-1].strip()
+                return f"Fetch {_dim(url)} {_dim(f'(saved to {saved_path})')}"
+            line_count = len(result.splitlines())
+            return f"Fetch {_dim(url)} {_dim(f'({line_count} lines)')}"
 
         case _:
             return f"{_esc(name)} {_dim(f'({len(result)} chars)')}"

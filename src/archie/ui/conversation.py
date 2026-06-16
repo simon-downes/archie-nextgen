@@ -181,7 +181,7 @@ class ErrorMessage(Static):
     DEFAULT_CSS = """
     ErrorMessage {
         background: $error-darken-3;
-        color: $error;
+        color: white;
         padding: 1 2;
         margin: 1 0;
     }
