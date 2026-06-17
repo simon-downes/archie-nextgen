@@ -281,7 +281,8 @@ class BedrockClient:
     def _call_with_retry(self, params: dict, max_retries: int = 3) -> dict:
         """Call converse_stream with retry on throttling.
 
-        If cachePoint is rejected (unsupported model), retry without it once
+        If cachePoint is rejected (unsupported model — raised as either
+        ValidationException or AccessDeniedException), retry without it once
         and disable caching for future calls.
         """
         for attempt in range(max_retries):
@@ -296,8 +297,16 @@ class BedrockClient:
                     extra={"delay_s": delay, "attempt": attempt + 1, "max_retries": max_retries},
                 )
                 time.sleep(delay)
-            except self.client.exceptions.ValidationException as e:
-                if self._cache_supported and "cachePoint" in str(e):
+            except (
+                self.client.exceptions.ValidationException,
+                self.client.exceptions.AccessDeniedException,
+            ) as e:
+                # Unsupported prompt caching surfaces as ValidationException on some
+                # models and AccessDeniedException ("prompt caching") on others.
+                msg_text = str(e)
+                if self._cache_supported and (
+                    "cachePoint" in msg_text or "prompt caching" in msg_text
+                ):
                     log.warning("cachePoint not supported, disabling prompt caching")
                     self._cache_supported = False
                     # Strip all cachePoint blocks from system and messages

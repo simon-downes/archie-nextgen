@@ -16,15 +16,16 @@
 
 - Python 3.13+
 - [uv](https://docs.astral.sh/uv/)
-- Docker (daemon running, user in `docker` group)
-- AWS credentials with Bedrock access (`eu-west-1` by default)
+- Docker (daemon running, user in `docker` group) — only needed for shell tool
+- AWS credentials with Bedrock access (`eu-west-1` by default) — only needed for Bedrock models
+- OR Ollama running locally — for local models without AWS
 
 ### Setup
 
 1. Clone the repository
 2. `uv sync` — installs the package + dev dependencies into a managed virtualenv
 3. `uv run archie build` — builds the sandbox Docker image
-4. Verify: `uv run archie --help` should show `chat` and `build` commands
+4. Verify: `uv run archie --help` should show commands (`chat`, `build`, `init`, `brain`)
 
 ## Project Conventions
 
@@ -33,7 +34,10 @@
 - `src/archie/` — main package (src layout — not importable without install/`uv run`)
 - `src/archie/agent.py` — the AgentLoop: callback-based turn orchestrator with cooperative interruption
 - `src/archie/tools/` — one file per tool; `__init__.py` holds the registry, `ToolSpec`, and shared utilities
-- `src/archie/llm/` — LLM provider clients; currently only `bedrock.py`
+- `src/archie/memory.py` — memory extraction from conversation history
+- `src/archie/code_intel.py` — tree-sitter based code intelligence
+- `src/archie/models.py` — model metadata and constants (pricing, context limits)
+- `src/archie/llm/` — LLM provider clients; `bedrock.py` and `ollama.py`
 - `src/archie/ui/` — Textual TUI components; `app.py` is the entry point
 - `src/archie/types.py` — provider-agnostic `ContentBlock` types (TextBlock, ToolUseBlock, ToolResultBlock)
 - `sandbox/` — `Dockerfile` for the per-session execution container
@@ -45,12 +49,12 @@
 The app has three layers with strict dependency flow:
 
 ```
-UI (app.py)  →  Agent (agent.py)  →  Runtime (bedrock.py / sandbox / tools)
+UI (app.py)  →  Agent (agent.py)  →  Runtime (llm/ / sandbox / tools)
 ```
 
 - The **UI** constructs the AgentLoop, passes a callback, and runs `run_turn()` on a worker thread. It never calls Bedrock or runs tools directly.
 - The **Agent** owns the turn loop, history mutations, and event emission. It communicates with the UI exclusively via frozen `AgentEvent` dataclasses pushed through the `emit` callback.
-- The **Runtime** (LLM client, sandbox, tools) handles I/O. The agent calls these synchronously.
+- The **Runtime** (LLM clients: Bedrock + Ollama, sandbox, tools) handles I/O. The agent calls these synchronously.
 
 Interruption is cooperative: the UI calls `agent.interrupt()` (sets a `threading.Event`); the agent checks it between stream events and around tool calls, raises internally, repairs history, and emits `TurnInterrupted`.
 
@@ -65,6 +69,12 @@ uv run ruff check --fix src tests  # auto-fix safe issues
 ```
 
 Line length is 100. Rules: `E`, `W`, `F`, `I` (isort), `B` (bugbear), `C4`, `N` (naming), `UP` (pyupgrade). `E501` (line-too-long) is ignored — Ruff formats but doesn't error on long lines.
+
+### Type Hints
+
+- Use Python 3.13+ syntax: `list[str]`, `dict[str, int]` instead of `List`, `Dict`
+- Annotate public function signatures; private helpers can be inferred
+- Use `|` for union types: `str | None` instead of `Optional[str]`
 
 ### Naming Conventions
 
@@ -97,7 +107,7 @@ uv run pytest
 
 - Use `tmp_path` (pytest built-in) for any test that touches the filesystem
 - Use `monkeypatch` to redirect `ARCHIE_DIR` / `CONFIG_PATH` in config tests — don't touch `~/.archie`
-- Mock at the I/O boundary: `MagicMock()` for `sandbox.exec`, `subprocess.run`, and `BedrockClient.stream` — not for internal logic
+- Mock at the I/O boundary: `MagicMock()` for `sandbox.exec`, `subprocess.run`, `BedrockClient.stream`, and `OllamaClient.stream` — not for internal logic
 - LLM stream responses are mocked using `_mock_llm(*call_responses)` in `test_agent.py` — follow that pattern for agent loop tests
 - `setup_method` is used in tool test classes to create a fresh spec + mock before each test
 

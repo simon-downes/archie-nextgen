@@ -136,6 +136,7 @@ class CodeIndex:
 
         if not resolved.is_file():
             return []
+            return []
 
         # Check mtime cache
         try:

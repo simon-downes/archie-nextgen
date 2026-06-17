@@ -613,7 +613,8 @@ class AgentLoop:
                 "\n\n⚠️ Warning: This exact tool call has been made 3 times consecutively. "
                 "Consider a different approach to avoid being blocked."
             )
-        return result, False
+        is_error = result.startswith("Error:") if isinstance(result, str) else False
+        return result, is_error
 
     def _finalise_interrupted_turn(self) -> None:
         """Repair history so every toolUse has a matching toolResult.

@@ -1,11 +1,12 @@
 # Archie
 
-Personal AI coding assistant with a terminal UI, tool-calling, and a Docker sandbox for safe shell execution. Powered by Anthropic Claude via AWS Bedrock.
+Personal AI coding assistant with a terminal UI, tool-calling, and a Docker sandbox for safe shell execution. Supports Anthropic Claude via AWS Bedrock and local models via Ollama.
 
 ## Key Rules
 
 - Build the sandbox image with `archie build` before running `archie chat` — the chat command will fail pre-flight if the image is missing.
-- AWS credentials must be available in the environment (e.g. via `~/.aws/credentials` or environment variables) — Archie talks to Bedrock directly, there is no API key.
+- For Bedrock: AWS credentials must be available in the environment (e.g. via `~/.aws/credentials` or environment variables).
+- For Ollama: set `OLLAMA_HOST` or configure in `nextgen.yaml` — no AWS needed.
 - Config lives at `~/.archie/nextgen.yaml` and is auto-created with defaults on first run — edit it to change the model or region.
 - Model IDs must use the Bedrock cross-region inference profile format (e.g. `eu.anthropic.claude-sonnet-4-6`) — bare model IDs are not accepted.
 - The sandbox container is per-session and disposable — it is started lazily on first tool use and destroyed when the session ends.
@@ -14,7 +15,7 @@ Personal AI coding assistant with a terminal UI, tool-calling, and a Docker sand
 
 ## Installation
 
-**Prerequisites:** Python 3.13+, [uv](https://docs.astral.sh/uv/), Docker, AWS credentials with Bedrock access.
+**Prerequisites:** Python 3.13+, [uv](https://docs.astral.sh/uv/), Docker (optional, for shell tool), and either AWS credentials with Bedrock access OR [Ollama](https://ollama.com/) running locally.
 
 ```bash
 # Clone and install
@@ -24,6 +25,9 @@ uv sync
 
 # Build the sandbox image (required before first chat)
 uv run archie build
+
+# (Optional) Initialise the brain for memory/personal knowledge
+uv run archie init
 ```
 
 ## Usage
@@ -34,6 +38,12 @@ uv run archie chat
 
 # Rebuild the sandbox image (e.g. after Dockerfile changes)
 uv run archie build
+
+# Initialise brain directory structure
+uv run archie init
+
+# Rebuild brain index from markdown files
+uv run archie brain reindex
 ```
 
 ### Key Bindings
@@ -65,6 +75,11 @@ Config file: `~/.archie/nextgen.yaml` (auto-created on first run).
 | `sandbox.image` | `archie-sandbox:nextgen` | Docker image name built by `archie build` |
 | `sandbox.mounts` | `[]` | Additional `host:container:mode` mount specs |
 | `tools.allowed_directories` | `[]` | Extra absolute paths the model can read/search |
+| `ollama.host` | `http://localhost:11434` | Ollama server URL |
+| `ollama.timeout` | `120` | Request timeout in seconds |
+| `brain_dir` | `~/.archie/new-brain` | Directory for memory/personal knowledge |
+| `memory.extraction_model` | `eu.anthropic.claude-haiku-3-20250305-v1:0` | Model for memory extraction |
+| `memory.extraction_interval` | `5` | Turns between extraction runs |
 
 ### Available Models
 
@@ -96,6 +111,42 @@ in:fresh/cache_read/cache_write out:output │ ctx:N% │ $cost
 The sandbox is a Debian-based Docker container with a curated set of developer tools pre-installed: `git`, `ripgrep`, `fd`, `jq`, `yq`, AWS CLI, GitHub CLI, OpenTofu, `pandoc`, `shellcheck`, `sqlite3`, and more. See [`sandbox/Dockerfile`](sandbox/Dockerfile) for the full list.
 
 The container user matches the host user (UID is passed as a build arg) to avoid file permission issues on mounted directories.
+
+## Memory & Brain
+
+Archie can extract and store memories from conversations:
+
+- Memories are saved to `brain_dir/_memory/` as markdown files
+- Automatic extraction runs every N turns (configurable via `memory.extraction_interval`)
+- Use the **recall** tool to search past memories
+- Use the **brain** tool to read/write structured knowledge (projects, people, knowledge base)
+- Brain markdown files support YAML frontmatter for indexing
+
+## Tools
+
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read file contents with line numbers and pagination |
+| `write_file` | Create or overwrite files |
+| `edit_file` | Search-and-replace edits to existing files |
+| `list_files` | List directory contents with optional glob filtering |
+| `search_files` | Regex search across files (ripgrep-based) |
+| `shell` | Execute commands in the Docker sandbox |
+| `web_search` | DuckDuckGo search |
+| `web_fetch` | Fetch and convert web content to markdown |
+| `code` | Code intelligence: outline, search symbols, project overview (tree-sitter based) |
+| `self_debug` | Retrieve Archie's own debug logs |
+| `retrieve_artifact` | Retrieve evicted tool results by ID |
+| `brain` | Read/write structured knowledge (projects, people, knowledge base) |
+| `recall` | Semantic search of extracted memories |
+| `ui_summary` | Internal UI state inspection |
+
+## Code Intelligence
+
+Archie uses tree-sitter for parsing multiple languages:
+- Python, JavaScript, TypeScript, Go, Rust, PHP, CSS, HCL
+
+Use the **code** tool to: get project overviews, outline specific files, search for symbols by name.
 
 ## Development
 
