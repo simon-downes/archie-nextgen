@@ -49,6 +49,19 @@ class Sandbox:
         username: str,
         uid: int,
     ) -> None:
+        """Initialize sandbox configuration.
+
+        The container is NOT started here — it's lazy-started on first exec()
+        via ensure_running(). This keeps session startup fast and avoids idle
+        containers when the model doesn't use shell tools.
+
+        Args:
+            config: Sandbox configuration (image, extra mounts).
+            project_dir: Host path to project directory (mounted rw at /workspace).
+            session_id: Unique session identifier (used in container name).
+            username: Host username (for mounting dotfiles like ~/.gitconfig).
+            uid: Host user UID (container runs as this user for file ownership).
+        """
         self.config = config
         self.project_dir = project_dir
         self.session_id = session_id

@@ -193,6 +193,21 @@ class AgentLoop:
         cwd: Path | None = None,
         pre_content_stash: dict[str, str] | None = None,
     ):
+        """Initialize the agent loop.
+
+        Args:
+            llm_client: LLM client for streaming requests.
+            session: Session for persisting conversation history.
+            tool_registry: Available tools the model can invoke.
+            system_prompt: System prompt sent with every request.
+            emit: Callback for agent events (UI consumes these for display).
+            sandbox: Optional Docker sandbox for shell command execution.
+            artifact_store: In-memory store for full tool results (evicted from context).
+            mtime_cache: Shared cache for read_file deduplication by tool_use_id.
+            cwd: Working directory for formatting relative paths in UI summaries.
+            pre_content_stash: Tool_use_id → file content mapping for diff display.
+
+        """
         self.llm = llm_client
         self.session = session
         self.tools = tool_registry

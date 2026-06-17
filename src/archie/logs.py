@@ -109,6 +109,11 @@ class ContextFilter(logging.Filter):
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Merge ambient context into LogRecord attributes.
+
+        Only sets attributes that don't already exist (explicit extras win).
+        Always returns True — filtering never drops records.
+        """
         for key, value in (_ctx.get() or {}).items():
             if not hasattr(record, key):
                 setattr(record, key, value)
@@ -119,6 +124,11 @@ class JsonFormatter(logging.Formatter):
     """One JSON object per line. Never raises — falls back to repr on bad fields."""
 
     def format(self, record: logging.LogRecord) -> str:
+        """Serialize a LogRecord to a JSONL line.
+
+        Outputs: {"ts": "...", "level": "...", "logger": "...", "msg": "...", ...extra_fields}
+        Falls back to repr() for non-serializable objects to ensure logging never crashes.
+        """
         out: dict = {
             "ts": datetime.fromtimestamp(record.created, UTC).strftime("%Y-%m-%dT%H:%M:%S.")
             + f"{int(record.msecs):03d}Z",

@@ -63,6 +63,7 @@ class ProjectHeader(Static):
         self._project_name = project_name
 
     def compose(self) -> ComposeResult:
+        """Build the project header widget."""
         yield Static(f"📂 {self._project_name}", classes="project-name")
 
 
@@ -188,6 +189,7 @@ class ArchieApp(App):
 """
 
     def compose(self) -> ComposeResult:
+        """Build the main UI layout."""
         yield ProjectHeader(self.project_dir.name)
         yield Conversation(id="conversation")
         yield StatusBar(id="status")
@@ -195,6 +197,7 @@ class ArchieApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        """Initialize widget state after UI construction."""
         self._update_status()
         self.query_one("#input", MessageInput).focus()
 
@@ -254,6 +257,7 @@ class ArchieApp(App):
     # --- Message flow: User submits → Agent processes ---
 
     def on_message_input_submitted(self, event: MessageInput.Submitted) -> None:
+        """Handle user message submission (including ! shell commands)."""
         content = event.content
 
         # ! prefix: user shell command (independent of agent)
@@ -292,6 +296,7 @@ class ArchieApp(App):
             self.call_from_thread(self._show_error, f"Shell error: {e}")
 
     def on_shell_result(self, event: ShellResult) -> None:
+        """Display result of a user-initiated shell command."""
         conv = self.query_one("#conversation", Conversation)
         conv.add_shell_output(event.command, event.output, event.exit_code)
 
@@ -316,6 +321,7 @@ class ArchieApp(App):
             self.run_worker(self._run_memory_extraction, thread=True)
 
     def _finalise_streaming(self) -> None:
+        """Convert the active streaming message to a completed markdown block."""
         if self._streaming is None:
             return
         conv = self.query_one("#conversation", Conversation)
@@ -327,11 +333,13 @@ class ArchieApp(App):
         self._stream_text = ""
 
     def _remove_throbber(self) -> None:
+        """Remove the throbber animation widget."""
         if self._throbber is not None:
             self._throbber.remove()
             self._throbber = None
 
     def _show_error(self, message: str) -> None:
+        """Display an error message in the conversation."""
         conv = self.query_one("#conversation", Conversation)
         conv.add_error(message)
 
@@ -363,6 +371,7 @@ class ArchieApp(App):
         status.clear_estimate()
 
     def _run_memory_extraction(self) -> None:
+        """Background worker: extract memories from session to local store."""
         self._extract_memory()
 
     def _extract_memory(self) -> None:
@@ -385,6 +394,7 @@ class ArchieApp(App):
     # --- Actions ---
 
     def action_copy_block(self) -> None:
+        """Copy the currently focused message block to clipboard."""
         focused = self.focused
         if focused is not None and hasattr(focused, "get_copy_text"):
             text = focused.get_copy_text()
@@ -453,6 +463,7 @@ class ArchieApp(App):
             prompt_input.clear()
 
     async def action_quit(self) -> None:
+        """Graceful shutdown: extract memories and clean up sandbox."""
         self._extract_memory()
         self.sandbox.destroy()
         await super().action_quit()

@@ -52,6 +52,7 @@ class UserMessage(Static):
         super().__init__()
 
     def compose(self) -> ComposeResult:
+        """Build the user message widget."""
         header_text = Text.assemble(
             ("▶ You\n", Style(color=BRIGHT_MAGENTA, bold=True)),
             self._content,
@@ -96,7 +97,8 @@ class AssistantMessage(Widget):
         super().__init__()
         self._content = content
 
-    def compose(self):
+    def compose(self) -> ComposeResult:
+        """Build the assistant message widget with header and markdown."""
         yield Static(
             Text.assemble(("● Archie", Style(color=BRIGHT_BLUE, bold=True))),
             classes="header",
@@ -152,7 +154,8 @@ class StreamingMessage(Widget):
     # Textual reactive: changing this value triggers watch_text() automatically.
     text: reactive[str] = reactive("")
 
-    def compose(self):
+    def compose(self) -> ComposeResult:
+        """Build the streaming message widget with spinner."""
         yield Static(
             Text.assemble(("● Archie", Style(color=BRIGHT_BLUE, bold=True)), (" ⟳")),
             classes="header",
@@ -323,7 +326,8 @@ class ShellOutput(Widget):
         self._output = output
         self._exit_code = exit_code
 
-    def compose(self):
+    def compose(self) -> ComposeResult:
+        """Build the shell output widget."""
         yield Static(f"$ {self._command}", classes="shell-header")
         yield Static(f"[exit: {self._exit_code}]", classes="shell-exit")
         if self._output:

@@ -80,6 +80,7 @@ class ArchieCommands(Provider):
         """
 
         async def _change() -> None:
+            """Switch to the selected model."""
             from archie.ui.app import ArchieApp
 
             app = self.app

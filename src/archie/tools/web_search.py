@@ -14,6 +14,7 @@ def make_web_search_spec() -> ToolSpec:
     """Create a web_search ToolSpec. No arguments needed."""
 
     def handler(params: dict) -> str:
+        """Run DuckDuckGo search and return formatted results."""
         query = params.get("query", "").strip()
         if not query:
             return tool_error("'query' is required.")

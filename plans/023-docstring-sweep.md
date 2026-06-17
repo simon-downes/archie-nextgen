@@ -18,7 +18,7 @@ for longer functions with non-obvious logic.
 ## Requirements
 
 - MUST add a docstring to every function and method that lacks one
-  - AC: `ruff check --select D102,D103` reports no missing docstrings
+  - AC: `uv run ruff check --select D102,D103` reports no missing docstrings
   - AC: docstrings explain *why* not just *what* for non-trivial functions
   - AC: single-line docstrings for trivial/obvious functions (getters, watchers)
   - AC: multi-line docstrings for handlers, parsers, and functions >10 lines

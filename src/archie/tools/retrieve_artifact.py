@@ -13,6 +13,7 @@ def make_retrieve_artifact_spec(store: ArtifactStore) -> ToolSpec:
     """Create a ToolSpec for retrieving evicted tool results."""
 
     def handler(params: dict) -> str:
+        """Retrieve full content of an evicted artifact by tool_use_id."""
         tool_use_id = params.get("tool_use_id", "")
         if not tool_use_id:
             return tool_error("tool_use_id is required")

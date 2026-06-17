@@ -42,6 +42,7 @@ def make_self_debug_spec(log_path: Path, session_id_fn: Callable[[], str]) -> To
     """
 
     def handler(params: dict) -> str:
+        """Filter and tail the debug log for troubleshooting."""
         tail = min(int(params.get("tail", _DEFAULT_TAIL)), _MAX_TAIL)
         level_name = str(params.get("level", "DEBUG")).upper()
         event = params.get("event", "")

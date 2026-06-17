@@ -29,9 +29,37 @@ class LLMClient(Protocol):
         messages: list[Turn],
         system: str,
         tool_config: list[dict] | None = None,
-    ) -> Generator[StreamEvent]: ...
+    ) -> Generator[StreamEvent]:
+        """Stream LLM response with tool use support.
 
-    def invoke(self, messages: list[Turn], system: str) -> str: ...
+        Yields deltas (text, tool calls, or metadata) as they arrive.
+        Implements fallback via ResourceExhaustedRetry for context-window
+        exhaustion (EvictionStrategy + BedrockClient).
+
+        Args:
+            messages: Conversation history with tool results.
+            system: System prompt prepended to every request.
+            tool_config: Available tools in provider format (None for text-only).
+
+        Yields:
+            StreamEvent: TextDelta, ToolUseEvent, Usage, or Done markers.
+        """
+        ...
+
+    def invoke(self, messages: list[Turn], system: str) -> str:
+        """Simple blocking call for one-shot prompts without tools.
+
+        Used by label.py and recall.py for lightweight summarisation.
+        No streaming, no tool use, minimal latency.
+
+        Args:
+            messages: Conversation history (usually single user message).
+            system: System prompt for the request.
+
+        Returns:
+            Complete model response as a single string.
+        """
+        ...
 
 
 def get_ollama_client_class() -> type:

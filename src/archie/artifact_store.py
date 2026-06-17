@@ -14,10 +14,28 @@ class ArtifactStore:
     """
 
     def __init__(self):
+        """Initialize empty in-memory storage."""
         self._store: dict[str, dict[str, str]] = {}
 
     def put(self, tool_use_id: str, content: str, summary: str) -> None:
+        """Store full content and summary keyed by tool_use_id.
+
+        Args:
+            tool_use_id: Unique identifier from the LLM tool_use block.
+            content: Full raw result string from the tool.
+            summary: Brief human-readable summary for eviction stubs.
+
+        """
         self._store[tool_use_id] = {"content": content, "summary": summary}
 
     def get(self, tool_use_id: str) -> dict[str, str] | None:
+        """Retrieve stored content and summary by tool_use_id.
+
+        Args:
+            tool_use_id: Unique identifier from the LLM tool_use block.
+
+        Returns:
+            Dict with 'content' and 'summary' keys, or None if not found.
+
+        """
         return self._store.get(tool_use_id)

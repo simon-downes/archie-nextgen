@@ -68,9 +68,11 @@ class _ThrobberVisual(Visual):
         return [Strip(segments[offset : offset + width], cell_length=width)]
 
     def get_optimal_width(self, rules: RulesMap, container_width: int) -> int:
+        """Return the container width — the throbber fills available space."""
         return container_width
 
     def get_height(self, rules: RulesMap, width: int) -> int:
+        """Return height of 1 — single-line bar."""
         return 1
 
 
@@ -100,8 +102,10 @@ class Throbber(Widget):
     """
 
     def on_mount(self) -> None:
+        """Start the animation refresh loop at ~15fps."""
         # ~15fps refresh rate — enough for smooth animation without burning CPU
         self.auto_refresh = 1 / 15
 
     def render(self) -> _ThrobberVisual:
+        """Render a scrolling rainbow gradient visual."""
         return _ThrobberVisual()

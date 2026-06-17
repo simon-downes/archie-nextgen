@@ -35,6 +35,7 @@ def make_write_file_spec(
     """
 
     def handler(params: dict) -> str:
+        """Write or append content to a file with allowlist validation."""
         path_str = params["path"]
         content = params["content"]
         append = bool(params.get("append", False))

@@ -22,6 +22,7 @@ def make_code_spec(cwd: Path, allowed_directories: list[Path]) -> ToolSpec:
     index = CodeIndex(cwd)
 
     def handler(params: dict) -> str:
+        """Dispatch to operation handler based on params['operation']."""
         operation = params.get("operation", "")
 
         match operation:
@@ -71,6 +72,7 @@ def make_code_spec(cwd: Path, allowed_directories: list[Path]) -> ToolSpec:
 
 
 def _handle_outline(params: dict, index: CodeIndex, cwd: Path, allowed: list[Path]) -> str:
+    """Return outline of symbols in a single file."""
     path_str = params.get("path", "")
     if not path_str:
         return tool_error("'path' is required for outline operation.")
@@ -123,6 +125,7 @@ def _handle_outline(params: dict, index: CodeIndex, cwd: Path, allowed: list[Pat
 
 
 def _handle_search(params: dict, index: CodeIndex, cwd: Path) -> str:
+    """Find symbol definitions matching name across the project."""
     name = params.get("name", "")
     if not name:
         return tool_error("'name' is required for search operation.")
@@ -156,6 +159,7 @@ def _handle_search(params: dict, index: CodeIndex, cwd: Path) -> str:
 
 
 def _handle_overview(params: dict, index: CodeIndex, cwd: Path) -> str:
+    """Return high-level project structure showing files and directories."""
     path_str = params.get("path", "")
     if path_str:
         from archie.tools import CONTAINER_PROJECT_ROOT

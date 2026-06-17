@@ -46,54 +46,63 @@ class Symbol:
 
 
 def _load_python():
+    """Load the Python tree-sitter parser."""
     import tree_sitter_python
 
     return tree_sitter.Language(tree_sitter_python.language())
 
 
 def _load_javascript():
+    """Load the JavaScript tree-sitter parser."""
     import tree_sitter_javascript
 
     return tree_sitter.Language(tree_sitter_javascript.language())
 
 
 def _load_typescript():
+    """Load the TypeScript tree-sitter parser."""
     import tree_sitter_typescript
 
     return tree_sitter.Language(tree_sitter_typescript.language_typescript())
 
 
 def _load_tsx():
+    """Load the TSX tree-sitter parser."""
     import tree_sitter_typescript
 
     return tree_sitter.Language(tree_sitter_typescript.language_tsx())
 
 
 def _load_php():
+    """Load the PHP tree-sitter parser."""
     import tree_sitter_php
 
     return tree_sitter.Language(tree_sitter_php.language_php())
 
 
 def _load_go():
+    """Load the Go tree-sitter parser."""
     import tree_sitter_go
 
     return tree_sitter.Language(tree_sitter_go.language())
 
 
 def _load_rust():
+    """Load the Rust tree-sitter parser."""
     import tree_sitter_rust
 
     return tree_sitter.Language(tree_sitter_rust.language())
 
 
 def _load_css():
+    """Load the CSS tree-sitter parser."""
     import tree_sitter_css
 
     return tree_sitter.Language(tree_sitter_css.language())
 
 
 def _load_hcl():
+    """Load the HCL tree-sitter parser."""
     import tree_sitter_hcl
 
     return tree_sitter.Language(tree_sitter_hcl.language())
@@ -305,6 +314,7 @@ def _extract_python(root, source: bytes) -> list[Symbol]:
 
 
 def _python_function(node, source: bytes) -> Symbol:
+    """Build a Symbol for a Python function_definition node."""
     name = _text(node.child_by_field_name("name"), source)
     params = _text(node.child_by_field_name("parameters"), source)
     ret_node = node.child_by_field_name("return_type")
@@ -318,6 +328,7 @@ def _python_function(node, source: bytes) -> Symbol:
 
 
 def _python_class(node, source: bytes) -> Symbol:
+    """Build a Symbol for a Python class_definition node (including methods)."""
     name = _text(node.child_by_field_name("name"), source)
     body = node.child_by_field_name("body")
     children = []
@@ -364,6 +375,7 @@ def _extract_javascript(root, source: bytes) -> list[Symbol]:
 
 
 def _js_function(node, source: bytes) -> Symbol:
+    """Build a Symbol for a JavaScript/TypeScript function_declaration node."""
     name_node = node.child_by_field_name("name")
     name = _text(name_node, source) if name_node else "anonymous"
     params_node = node.child_by_field_name("parameters")
@@ -379,6 +391,7 @@ def _js_function(node, source: bytes) -> Symbol:
 
 
 def _js_class(node, source: bytes) -> Symbol:
+    """Build a Symbol for a JavaScript/TypeScript class_declaration node (including methods)."""
     name_node = node.child_by_field_name("name")
     name = _text(name_node, source) if name_node else "anonymous"
     children = []
@@ -557,6 +570,7 @@ def _extract_php(root, source: bytes) -> list[Symbol]:
 
 
 def _extract_php_node(node, source: bytes, symbols: list[Symbol]) -> None:
+    """Recursively extract function and class symbols from PHP AST nodes."""
     if node.type == "function_definition":
         name_node = node.child_by_field_name("name")
         params_node = node.child_by_field_name("parameters")

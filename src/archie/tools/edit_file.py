@@ -37,6 +37,11 @@ def make_edit_file_spec(
     """
 
     def handler(params: dict) -> str:
+        """Apply search-and-replace edits to an existing file.
+
+        Supports JSON-string-encoded edits (some models double-encode).
+        No docstring → error. Stashes pre-edit content for UI diffs.
+        """
         path_str = params["path"]
         edits = params["edits"]
 

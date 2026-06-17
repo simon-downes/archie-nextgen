@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 
 from rich.text import Text
+from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -73,7 +74,8 @@ class StatusBar(Widget):
     _output_estimate: reactive[int] = reactive(0)
     _estimating: reactive[bool] = reactive(False)
 
-    def compose(self):
+    def compose(self) -> ComposeResult:
+        """Build the status bar with left and right sections."""
         with Horizontal():
             yield Static("", id="status-left")
             yield Static("", id="status-right")
@@ -98,33 +100,43 @@ class StatusBar(Widget):
     # --- Watchers: any reactive change triggers a display refresh ---
 
     def _watch_model_name(self) -> None:
+        """Refresh display when model name changes."""
         self._refresh_display()
 
     def _watch_session_input(self) -> None:
+        """Refresh display when input tokens change."""
         self._refresh_display()
 
     def _watch_session_output(self) -> None:
+        """Refresh display when output tokens change."""
         self._refresh_display()
 
     def _watch_cache_read(self) -> None:
+        """Refresh display when cache read tokens change."""
         self._refresh_display()
 
     def _watch_cache_write(self) -> None:
+        """Refresh display when cache write tokens change."""
         self._refresh_display()
 
     def _watch_context_pct(self) -> None:
+        """Refresh display when context percentage changes."""
         self._refresh_display()
 
     def _watch_session_id(self) -> None:
+        """Refresh display when session ID changes."""
         self._refresh_display()
 
     def _watch_supports_cache(self) -> None:
+        """Refresh display when cache support flag changes."""
         self._refresh_display()
 
     def _watch_pricing_label(self) -> None:
+        """Refresh display when pricing label changes."""
         self._refresh_display()
 
     def _watch_git_branch(self) -> None:
+        """Refresh display when git branch changes."""
         self._refresh_display()
 
     def _refresh_display(self) -> None:

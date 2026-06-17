@@ -33,6 +33,7 @@ def make_recall_spec(brain_dir: Path) -> ToolSpec:
     db_path = brain_dir / "brain.db"
 
     def handler(params: dict) -> str:
+        """Search memory fragments by query terms with optional filters."""
         query = params.get("query", "")
         type_filter = params.get("type")
         project_filter = params.get("project")

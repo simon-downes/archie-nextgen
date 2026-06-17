@@ -50,6 +50,7 @@ def make_web_fetch_spec(cwd: Path, allowed_directories: list[Path]) -> ToolSpec:
     """Create a web_fetch ToolSpec bound to the given path constraints."""
 
     def handler(params: dict) -> str:
+        """Fetch URL content; handles text, HTML→markdown, and binary saves."""
         url = params.get("url", "").strip()
         if not url:
             return tool_error("'url' is required.")
