@@ -20,6 +20,7 @@ Two design choices shape everything here:
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -140,6 +141,26 @@ WITHIN_TURN_KEEP = 10
 def _hash_args(args: dict) -> str:
     """Create a stable hash of tool arguments for repetition detection."""
     return hashlib.md5(json.dumps(args, sort_keys=True).encode()).hexdigest()
+
+
+_SHELL_EXIT_RE = re.compile(r"\[exit: (\d+)\]")
+
+
+def _is_tool_error(result: str) -> bool:
+    """Determine if a tool result represents an error.
+
+    Checks for:
+    - tool_error() prefix ("Error: ...")
+    - Shell non-zero exit codes ("[exit: N]" where N > 0)
+    """
+    if not isinstance(result, str):
+        return False
+    if result.startswith("Error:"):
+        return True
+    m = _SHELL_EXIT_RE.search(result)
+    if m and int(m.group(1)) != 0:
+        return True
+    return False
 
 
 @dataclass
@@ -613,7 +634,7 @@ class AgentLoop:
                 "\n\n⚠️ Warning: This exact tool call has been made 3 times consecutively. "
                 "Consider a different approach to avoid being blocked."
             )
-        is_error = result.startswith("Error:") if isinstance(result, str) else False
+        is_error = _is_tool_error(result)
         return result, is_error
 
     def _finalise_interrupted_turn(self) -> None:
