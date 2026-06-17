@@ -27,8 +27,12 @@ def mock_client():
         class ValidationException(Exception):
             pass
 
+        class AccessDeniedException(Exception):
+            pass
+
         mock_runtime.exceptions.ThrottlingException = ThrottlingException
         mock_runtime.exceptions.ValidationException = ValidationException
+        mock_runtime.exceptions.AccessDeniedException = AccessDeniedException
 
         client = BedrockClient(
             model_id="anthropic.claude-sonnet-4-20250514-v1:0",
