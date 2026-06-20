@@ -17,6 +17,16 @@ from textual.widgets import TextArea
 class MessageInput(TextArea):
     """Multiline input area with chat-style key bindings."""
 
+    DEFAULT_CSS = """
+    MessageInput {
+        height: auto;
+        max-height: 8;
+        min-height: 1;
+        margin: 0;
+        padding: 0 1;
+    }
+    """
+
     class Submitted(Message):
         """Posted when user presses Enter with non-empty content.
 

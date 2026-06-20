@@ -50,7 +50,7 @@ def make_edit_file_spec(
             import json
 
             try:
-                edits = json.loads(edits)
+                edits = json.loads(edits, strict=False)
             except (json.JSONDecodeError, TypeError):
                 return tool_error("edits must be a JSON array of {old, new} objects")
         if not isinstance(edits, list):
@@ -113,14 +113,18 @@ def make_edit_file_spec(
                 idx = content.index(old)
                 start_line = content[:idx].count("\n") + 1
                 end_line = start_line + old.count("\n")
-                edit_lines.append(f"{start_line}-{end_line}" if end_line > start_line else str(start_line))
+                edit_lines.append(
+                    f"{start_line}-{end_line}" if end_line > start_line else str(start_line)
+                )
                 content = content.replace(old, new)
                 total_replacements += count
             else:
                 idx = content.index(old)
                 start_line = content[:idx].count("\n") + 1
                 end_line = start_line + old.count("\n")
-                edit_lines.append(f"{start_line}-{end_line}" if end_line > start_line else str(start_line))
+                edit_lines.append(
+                    f"{start_line}-{end_line}" if end_line > start_line else str(start_line)
+                )
                 content = content.replace(old, new, 1)
                 total_replacements += 1
 

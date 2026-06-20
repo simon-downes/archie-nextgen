@@ -46,6 +46,7 @@ from archie.prompt import SYSTEM_PROMPT
 from archie.sandbox import Sandbox
 from archie.session import Session
 from archie.tools import create_default_registry
+from archie.ui import theme
 from archie.ui.commands import ArchieCommands
 from archie.ui.conversation import Conversation, StreamingMessage
 from archie.ui.input import MessageInput
@@ -57,6 +58,13 @@ log = logging.getLogger(__name__)
 
 class ProjectHeader(Static):
     """Top bar showing the current project name."""
+
+    DEFAULT_CSS = """
+    ProjectHeader {
+        height: 3;
+        padding: 1 2;
+    }
+    """
 
     def __init__(self, project_name: str) -> None:
         super().__init__()
@@ -98,6 +106,10 @@ class ArchieApp(App):
 
     def __init__(self) -> None:
         super().__init__()
+
+        # Register custom theme
+        self.register_theme(theme.THEME)
+        self.theme = "archie"
 
         self.config = load_config()
         self.model_info = get_model_info(self.config.model)

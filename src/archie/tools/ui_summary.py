@@ -461,7 +461,7 @@ def format_tool_complete(name: str, params: dict, result: str, is_error: bool, c
             query = params.get("query", "")
             if "No results found" in result:
                 return f"Web search {_hi(query)} {_dim('(no results)')}"
-            count = len([l for l in result.split("\n\n") if l.strip()])
+            count = len([line for line in result.split("\n\n") if line.strip()])
             return f"Web search {_hi(query)} {_dim(f'({count} results)')}"
 
         case "web_fetch":

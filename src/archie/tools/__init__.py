@@ -86,6 +86,7 @@ class ToolRegistry:
             for spec in self._tools.values()
         ]
 
+
 # Container project root — paths under this prefix are translated to host paths
 # when file tools execute outside the sandbox (e.g. in tests, local reads).
 CONTAINER_PROJECT_ROOT = "/workspace"
@@ -112,7 +113,7 @@ def validate_path(path: str, cwd: Path, allowed: list[Path]) -> Path:
     if path == CONTAINER_PROJECT_ROOT:
         resolved = cwd.resolve()
     elif path.startswith(CONTAINER_PROJECT_ROOT + "/"):
-        relative = path[len(CONTAINER_PROJECT_ROOT) + 1:]
+        relative = path[len(CONTAINER_PROJECT_ROOT) + 1 :]
         resolved = (cwd / relative).resolve()
     else:
         resolved = Path(path).resolve() if Path(path).is_absolute() else (cwd / path).resolve()

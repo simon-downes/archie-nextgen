@@ -101,6 +101,14 @@ class Throbber(Widget):
     Remove it when the first response event arrives.
     """
 
+    DEFAULT_CSS = """
+    Throbber {
+        height: 1;
+        margin: 0;
+        padding: 0;
+    }
+    """
+
     def on_mount(self) -> None:
         """Start the animation refresh loop at ~15fps."""
         # ~15fps refresh rate — enough for smooth animation without burning CPU

@@ -25,7 +25,7 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Markdown, Static
 
-from archie.ui.colours import BRIGHT_BLUE, BRIGHT_MAGENTA
+from archie.ui import theme
 
 
 class UserMessage(Static):
@@ -41,9 +41,8 @@ class UserMessage(Static):
 
     DEFAULT_CSS = """
     UserMessage {
-        background: $primary-background;
+        margin: 0 0 1 0;
         padding: 1 2;
-        margin: 1 0;
     }
     """
 
@@ -54,7 +53,7 @@ class UserMessage(Static):
     def compose(self) -> ComposeResult:
         """Build the user message widget."""
         header_text = Text.assemble(
-            ("▶ You\n", Style(color=BRIGHT_MAGENTA, bold=True)),
+            ("▶ You\n", Style(color=theme.SECONDARY, bold=True)),
             self._content,
         )
         yield Static(header_text)
@@ -77,19 +76,17 @@ class AssistantMessage(Widget):
 
     DEFAULT_CSS = """
     AssistantMessage {
-        padding: 1 2;
-        margin: 1 0;
-        height: auto;   /* Shrink to fit content, don't expand */
+        margin: 0 0 1 0;
+        padding: 0 2;
+        height: auto;
     }
     AssistantMessage > .header {
-        color: $success;
-        text-style: bold;
         height: auto;
     }
     AssistantMessage > Markdown {
         margin: 0;
         padding: 0;
-        height: auto;   /* Critical — without this, Markdown expands to fill parent */
+        height: auto;
     }
     """
 
@@ -100,7 +97,7 @@ class AssistantMessage(Widget):
     def compose(self) -> ComposeResult:
         """Build the assistant message widget with header and markdown."""
         yield Static(
-            Text.assemble(("● Archie", Style(color=BRIGHT_BLUE, bold=True))),
+            Text.assemble(("● Archie", Style(color=theme.PRIMARY, bold=True))),
             classes="header",
         )
         yield Markdown(self._content)
@@ -135,13 +132,11 @@ class StreamingMessage(Widget):
 
     DEFAULT_CSS = """
     StreamingMessage {
-        padding: 1 2;
-        margin: 1 0;
+        margin: 0 0 1 0;
+        padding: 0 2;
         height: auto;
     }
     StreamingMessage > .header {
-        color: $success;
-        text-style: bold;
         height: auto;
     }
     StreamingMessage > .content {
@@ -157,7 +152,7 @@ class StreamingMessage(Widget):
     def compose(self) -> ComposeResult:
         """Build the streaming message widget with spinner."""
         yield Static(
-            Text.assemble(("● Archie", Style(color=BRIGHT_BLUE, bold=True)), (" ⟳")),
+            Text.assemble(("● Archie", Style(color=theme.PRIMARY, bold=True)), (" ⟳")),
             classes="header",
         )
         yield Static("", classes="content")
@@ -183,10 +178,8 @@ class ErrorMessage(Static):
 
     DEFAULT_CSS = """
     ErrorMessage {
-        background: $error-darken-3;
-        color: white;
         padding: 1 2;
-        margin: 1 0;
+        margin: 0 0 1 0;
     }
     """
 
@@ -216,14 +209,22 @@ class IterationBlock(Widget):
 
     DEFAULT_CSS = """
     IterationBlock {
+        margin: 0 0 1 0;
         padding: 0 2;
-        margin: 0 0;
         height: auto;
     }
     IterationBlock > Static {
         height: auto;
         margin: 0;
         padding: 0;
+    }
+    IterationBlock > .tool-body {
+        display: none;
+        height: auto;
+        margin: 1 0 0 2;
+    }
+    IterationBlock > .tool-body.expanded {
+        display: block;
     }
     """
 
@@ -237,7 +238,7 @@ class IterationBlock(Widget):
 
         ui_summary is pre-formatted Rich markup from format_tool_pending.
         """
-        text = f"[bold #0178d4]○[/] {ui_summary}"
+        text = f"[bold {theme.PRIMARY}]○[/] {ui_summary}"
         widget = Static(text, markup=True)
         self._tool_widgets[tool_use_id] = widget
         self.mount(widget)
@@ -254,7 +255,7 @@ class IterationBlock(Widget):
         ui_summary is pre-formatted Rich markup from format_tool_complete.
         ui_detail lines are pre-formatted Rich markup from format_tool_detail.
         """
-        colour = "red" if is_error else "green"
+        colour = theme.ERROR if is_error else theme.SUCCESS
         text = f"[bold {colour}]●[/] {ui_summary}"
         if ui_detail:
             text += "\n" + "\n".join(ui_detail)
@@ -297,22 +298,17 @@ class ShellOutput(Widget):
     DEFAULT_CSS = """
     ShellOutput {
         padding: 1 2;
-        margin: 1 0;
-        background: $surface;
+        margin: 0 0 1 0;
         height: auto;
     }
     ShellOutput > .shell-header {
-        color: $text-muted;
-        text-style: bold;
         height: auto;
     }
     ShellOutput > .shell-exit {
-        color: $text-muted;
         height: auto;
         margin: 0 0 0 2;
     }
     ShellOutput > .shell-output {
-        color: $text-muted;
         height: auto;
         margin: 0 0 0 2;
         max-height: 20;
@@ -355,8 +351,8 @@ class Conversation(VerticalScroll):
 
     DEFAULT_CSS = """
     Conversation {
-        height: 1fr;    /* Fill available space */
-        padding: 1 0;
+        height: 1fr;
+        padding: 0;
     }
     """
 
@@ -372,7 +368,7 @@ class Conversation(VerticalScroll):
 
     def add_assistant_message(self, content: str) -> None:
         """Add a complete assistant message (used for session replay, not streaming)."""
-        self.mount(AssistantMessage(content.rstrip('\n')))
+        self.mount(AssistantMessage(content.rstrip("\n")))
         self.scroll_end(animate=False)
 
     def add_tool_call(self, name: str, args: dict, result: str, is_error: bool) -> None:
@@ -430,7 +426,7 @@ class Conversation(VerticalScroll):
         Uses mount(before=) + remove() to avoid a flash from the layout gap
         that would occur if we removed first then mounted.
         """
-        final = AssistantMessage(streaming.text.rstrip('\n'))
+        final = AssistantMessage(streaming.text.rstrip("\n"))
         self.mount(final, before=streaming)
         streaming.remove()
         self.scroll_end(animate=False)
