@@ -202,9 +202,17 @@ def _read_file_range(params: dict, result: str) -> str:
 def format_tool_pending(name: str, params: dict, cwd: Path) -> str:
     """Produce the summary shown while the tool is running (Rich markup)."""
     match name:
-        case "read_file":
+        case "read":
             path = _rel_path(params.get("path", ""), cwd)
-            return f"Read {_hi(path)}"
+            if params.get("offset", 1) == 1:
+                return f"Read {_hi(path)}"
+            offset = params.get("offset", 1)
+            limit = params.get("limit")
+            start = max(offset, 1)
+            if limit:
+                end = start + limit - 1
+                return f"Read {_hi(path)} {_dim(f'(L{start}\u2013{end})')}"
+            return f"Read {_hi(path)} {_dim(f'(L{start}\u2013?)')}"
 
         case "write_file":
             path = _rel_path(params.get("path", ""), cwd)
@@ -216,9 +224,9 @@ def format_tool_pending(name: str, params: dict, cwd: Path) -> str:
 
         case "list_files":
             path = params.get("path", ".")
-            glob = params.get("glob", "")
-            if glob:
-                combined = path.rstrip("/") + "/" + glob if path != "." else glob
+            glob_val = params.get("glob", "")
+            if glob_val:
+                combined = path.rstrip("/") + "/" + glob_val if path != "." else glob_val
                 return f"List {_hi(combined)}"
             return f"List {_hi(_rel_path(path, cwd))}"
 
@@ -304,7 +312,7 @@ def format_tool_complete(name: str, params: dict, result: str, is_error: bool, c
         return f"{base} \u2014 {_esc(error_msg)}"
 
     match name:
-        case "read_file":
+        case "read":
             path = _rel_path(params.get("path", ""), cwd)
             if "unchanged since last read" in result:
                 offset = params.get("offset", 0)
@@ -339,14 +347,14 @@ def format_tool_complete(name: str, params: dict, result: str, is_error: bool, c
 
         case "list_files":
             path = params.get("path", ".")
-            glob = params.get("glob", "")
-            if glob:
-                target = path.rstrip("/") + "/" + glob if path != "." else glob
+            glob_val = params.get("glob", "")
+            if glob_val:
+                target = path.rstrip("/") + "/" + glob_val if path != "." else glob_val
             else:
                 target = _rel_path(path, cwd)
 
             if "No files found" in result:
-                suffix = "(no matches)" if glob else "(empty)"
+                suffix = "(no matches)" if glob_val else "(empty)"
                 return f"List {_hi(target)} {_dim(suffix)}"
 
             shown, total = _list_file_count(result)

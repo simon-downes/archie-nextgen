@@ -250,15 +250,16 @@ def summarise_tool_output(name: str, tool_input: dict, output: str, is_error: bo
         return output.split("\n")[0][:100]
 
     match name:
-        case "read_file":
-            lines = output.count("\n")
-            return f"{lines} lines"
+        case "read":
+            # Could be file or directory output.
+            if "File:" in output:
+                lines = output.count("\n")
+                return f"{lines} lines"
+            file_count = output.strip().count("\n") + 1 if output.strip() else 0
+            return f"{file_count} files"
         case "write_file" | "edit_file":
             # These already return concise messages like "Written: path (42 lines)"
             return output[:100]
-        case "list_files":
-            file_count = output.strip().count("\n") + 1 if output.strip() else 0
-            return f"{file_count} files"
         case "search_files":
             match_count = output.count("\n")
             return f"{match_count} matches"

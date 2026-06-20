@@ -169,7 +169,7 @@ class TestFlushTurn:
 class TestSummariseToolOutput:
     def test_read_file(self):
         output = "File: test.py (42 lines)\n\n    1|line1\n    2|line2\n    3|line3"
-        assert summarise_tool_output("read_file", {"path": "test.py"}, output, False) == "4 lines"
+        assert summarise_tool_output("read", {"path": "test.py"}, output, False) == "4 lines"
 
     def test_shell_success(self):
         output = "$ ls\n[exit: 0]\nfile1\nfile2"
@@ -179,7 +179,7 @@ class TestSummariseToolOutput:
 
     def test_list_files(self):
         output = "src/a.py\nsrc/b.py\nsrc/c.py"
-        assert summarise_tool_output("list_files", {"glob": "*.py"}, output, False) == "3 files"
+        assert summarise_tool_output("read", {"path": "src"}, output, False) == "3 files"
 
     def test_search_files(self):
         output = "src/a.py:1:match1\nsrc/b.py:2:match2\n"
@@ -187,7 +187,7 @@ class TestSummariseToolOutput:
 
     def test_error(self):
         output = "Error: file not found\nsome detail"
-        result = summarise_tool_output("read_file", {"path": "x"}, output, True)
+        result = summarise_tool_output("read", {"path": "x"}, output, True)
         assert result == "Error: file not found"
 
     def test_write_file(self):

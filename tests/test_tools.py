@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from archie.tools import ToolRegistry, ToolSpec, truncate_result, validate_path
-from archie.tools.read_file import make_read_file_spec
+from archie.tools.read import make_read_spec
 from archie.tools.search_files import make_search_files_spec
 
 # --- validate_path tests ---
@@ -108,14 +108,14 @@ class TestToolRegistry:
         }
 
 
-# --- read_file tool tests ---
+# --- read tool tests ---
 
 
 class TestReadFile:
     @pytest.fixture
     def tool(self, tmp_path):
-        """Create a read_file tool bound to tmp_path."""
-        return make_read_file_spec(tmp_path, [])
+        """Create a read tool bound to tmp_path."""
+        return make_read_spec(tmp_path, [])
 
     def test_reads_file_with_line_numbers(self, tmp_path, tool):
         """Output includes line numbers in '  N|content' format."""
@@ -127,13 +127,13 @@ class TestReadFile:
         assert "    3|line3" in result
 
     def test_reads_with_offset_and_limit(self, tmp_path, tool):
-        """Pagination via offset/limit works correctly."""
+        """Pagination via offset/limit works correctly (1-indexed)."""
         f = tmp_path / "big.txt"
         f.write_text("\n".join(f"line{i}" for i in range(1, 101)))
         result = tool.handler({"path": "big.txt", "offset": 10, "limit": 5})
-        assert "   11|line11" in result
-        assert "   15|line15" in result
-        assert "line16" not in result
+        assert "   10|line10" in result
+        assert "   14|line14" in result
+        assert "line15" not in result
         assert "Use offset=15 to continue reading" in result
 
     def test_rejects_path_outside_allowed(self, tmp_path, tool):
@@ -168,14 +168,14 @@ class TestReadFile:
         """Non-existent file returns error."""
         result = tool.handler({"path": "nope.txt"})
         assert "Error:" in result
-        assert "Not a file" in result
+        assert "does not exist" in result
 
     def test_pagination_hint_when_truncated(self, tmp_path, tool):
         """Shows pagination hint when there are more lines."""
         f = tmp_path / "big.txt"
         f.write_text("\n".join(f"line{i}" for i in range(600)))
         result = tool.handler({"path": "big.txt", "limit": 10})
-        assert "Use offset=10 to continue reading" in result
+        assert "Use offset=11 to continue reading" in result
         assert "Showing lines 1-10 of 600" in result
 
 
@@ -245,9 +245,9 @@ class TestReadFileMtimeDedup:
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello\nworld\n")
 
-        from archie.tools.read_file import make_read_file_spec
+        from archie.tools.read import make_read_spec
 
-        spec = make_read_file_spec(cwd=tmp_path, allowed_directories=[])
+        spec = make_read_spec(cwd=tmp_path, allowed_directories=[])
 
         # First read — returns content
         result1 = spec.handler({"path": str(test_file), "offset": 0, "limit": 500})
@@ -264,9 +264,9 @@ class TestReadFileMtimeDedup:
         test_file = tmp_path / "test.txt"
         test_file.write_text("version1\n")
 
-        from archie.tools.read_file import make_read_file_spec
+        from archie.tools.read import make_read_spec
 
-        spec = make_read_file_spec(cwd=tmp_path, allowed_directories=[])
+        spec = make_read_spec(cwd=tmp_path, allowed_directories=[])
 
         # First read
         result1 = spec.handler({"path": str(test_file)})
@@ -286,26 +286,26 @@ class TestReadFileMtimeDedup:
         test_file = tmp_path / "test.txt"
         test_file.write_text("line1\nline2\nline3\n")
 
-        from archie.tools.read_file import make_read_file_spec
+        from archie.tools.read import make_read_spec
 
-        spec = make_read_file_spec(cwd=tmp_path, allowed_directories=[])
+        spec = make_read_spec(cwd=tmp_path, allowed_directories=[])
 
-        # Read with offset=0
-        spec.handler({"path": str(test_file), "offset": 0, "limit": 500})
+        # Read with offset=1
+        spec.handler({"path": str(test_file), "offset": 1, "limit": 500})
 
-        # Read with offset=1 — different params, should return content
-        result = spec.handler({"path": str(test_file), "offset": 1, "limit": 500})
+        # Read with offset=2 — different params, should return content
+        result = spec.handler({"path": str(test_file), "offset": 2, "limit": 500})
         assert "unchanged" not in result.lower()
         assert "line2" in result
 
     def test_stub_references_originating_tool_use_id(self, tmp_path):
         """The unchanged-stub names the tool result that holds the content."""
         from archie.tools import current_tool_use_id
-        from archie.tools.read_file import make_read_file_spec
+        from archie.tools.read import make_read_spec
 
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello\n")
-        spec = make_read_file_spec(cwd=tmp_path, allowed_directories=[])
+        spec = make_read_spec(cwd=tmp_path, allowed_directories=[])
 
         token = current_tool_use_id.set("tu_orig")
         try:
@@ -320,12 +320,12 @@ class TestReadFileMtimeDedup:
 
     def test_eviction_invalidation_forces_reread(self, tmp_path):
         """Removing the cache entry (as eviction does) makes the next read return content."""
-        from archie.tools.read_file import make_read_file_spec
+        from archie.tools.read import make_read_spec
 
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello\n")
         cache: dict = {}
-        spec = make_read_file_spec(cwd=tmp_path, allowed_directories=[], mtime_cache=cache)
+        spec = make_read_spec(cwd=tmp_path, allowed_directories=[], mtime_cache=cache)
 
         spec.handler({"path": str(test_file)})
         assert cache  # populated
@@ -344,14 +344,14 @@ class TestReadFileBudget:
 
     def test_budget_hit_gives_accurate_offset_hint(self, tmp_path):
         """Following the pagination hint produces contiguous lines with no gap."""
-        from archie.tools.read_file import make_read_file_spec
+        from archie.tools.read import make_read_spec
 
         # Create a file large enough to exceed the 32KB budget
         lines = [f"line {i}: {'x' * 80}" for i in range(600)]
         big_file = tmp_path / "big.py"
         big_file.write_text("\n".join(lines))
 
-        spec = make_read_file_spec(tmp_path, [])
+        spec = make_read_spec(tmp_path, [])
 
         # First read
         result1 = spec.handler({"path": "big.py"})
@@ -363,19 +363,19 @@ class TestReadFileBudget:
         # Second read following the hint
         result2 = spec.handler({"path": "big.py", "offset": next_offset})
 
-        # First line of result2 should be exactly next_offset + 1 (1-based display)
+        # First line of result2 should be exactly next_offset (1-indexed)
         content_lines = [x for x in result2.split("\n") if "|" in x]
         first_line_num = int(content_lines[0].split("|")[0].strip())
-        assert first_line_num == next_offset + 1
+        assert first_line_num == next_offset
 
     def test_small_file_no_pagination(self, tmp_path):
         """A small file fits entirely within budget — no pagination hint."""
-        from archie.tools.read_file import make_read_file_spec
+        from archie.tools.read import make_read_spec
 
         small_file = tmp_path / "small.py"
         small_file.write_text("hello\nworld\n")
 
-        spec = make_read_file_spec(tmp_path, [])
+        spec = make_read_spec(tmp_path, [])
         result = spec.handler({"path": "small.py"})
         assert "Use offset=" not in result
         assert "2 lines" in result

@@ -31,7 +31,7 @@ round-trips:
 - When making multiple edits to one file, use a single edit_file call with
   multiple entries in the edits array — never sequential single-edit calls.
 - Use the code tool (outline/search) to locate symbols and structure; use
-  read_file only for content you will edit or quote, with offset/limit to
+  read only for content you will edit or quote, with offset/limit to
   target the region you need.
 - Run verification (format + lint + tests) as one combined shell command once
   changes are complete — not piecemeal after each change.

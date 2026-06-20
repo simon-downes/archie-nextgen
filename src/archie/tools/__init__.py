@@ -195,8 +195,7 @@ def create_default_registry(
     """
     from archie.tools.code import make_code_spec
     from archie.tools.edit_file import make_edit_file_spec
-    from archie.tools.list_files import make_list_files_spec
-    from archie.tools.read_file import make_read_file_spec
+    from archie.tools.read import make_read_spec
     from archie.tools.search_files import make_search_files_spec
     from archie.tools.web_fetch import make_web_fetch_spec
     from archie.tools.web_search import make_web_search_spec
@@ -204,15 +203,14 @@ def create_default_registry(
 
     registry = ToolRegistry()
 
-    # Shared mtime cache — read_file populates it, write/edit tools invalidate
+    # Shared mtime cache — read tool populates it, write/edit tools invalidate
     # entries when they modify files, and the agent loop invalidates entries
     # when the corresponding tool result is evicted from context. This ensures
     # reads return fresh content instead of useless "file unchanged" stubs.
     if mtime_cache is None:
         mtime_cache = {}
 
-    registry.register(make_list_files_spec(cwd, allowed_directories))
-    registry.register(make_read_file_spec(cwd, allowed_directories, mtime_cache))
+    registry.register(make_read_spec(cwd, allowed_directories, mtime_cache))
     registry.register(make_search_files_spec(cwd, allowed_directories))
     registry.register(
         make_write_file_spec(cwd, allowed_directories, mtime_cache, pre_content_stash)

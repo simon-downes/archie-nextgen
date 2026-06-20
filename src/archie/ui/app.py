@@ -158,7 +158,7 @@ class ArchieApp(App):
         allowed = [Path(p) for p in self.config.tools.allowed_directories]
         allowed.append(Path.home() / ".archie")
         self.artifact_store = ArtifactStore()
-        # Shared between read_file (populates), write/edit tools (invalidate on
+        # Shared between read (populates), write/edit tools (invalidate on
         # modification) and AgentLoop (invalidates on context eviction).
         self.mtime_cache: dict[tuple[str, int, int], tuple[float, str]] = {}
         # Shared between edit/write tools (populate) and AgentLoop (consume for UI diffs).
@@ -196,7 +196,7 @@ class ArchieApp(App):
 - Git branch: {self._git_branch}
 - File tools: use relative paths from project root (e.g. src/archie/ui/app.py)
 - Shell: executes in /workspace — do not cd elsewhere
-- Prefer provided tools (read_file, edit_file, search_files, code) over shell equivalents
+- Prefer provided tools (read, edit_file, search_files, code) over shell equivalents
   (cat, sed, grep, find). Use shell only for running commands, tests, and git.
 """
 

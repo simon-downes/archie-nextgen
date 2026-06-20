@@ -73,7 +73,10 @@ class TestWebSearchTool:
 
     def test_max_results_respected(self):
         spec = make_web_search_spec()
-        fake_results = [{"title": f"Result {i}", "href": f"https://example.com/{i}", "body": f"Body {i}"} for i in range(8)]
+        fake_results = [
+            {"title": f"Result {i}", "href": f"https://example.com/{i}", "body": f"Body {i}"}
+            for i in range(8)
+        ]
 
         def fake_text(query, safesearch="off", backend="auto", max_results=8):
             return fake_results
