@@ -14,7 +14,19 @@ History and sandbox are preserved; the new model takes effect on the next turn.
 
 from textual.command import Hit, Hits, Provider
 
-from archie.models import MODELS
+from archie.models import MODELS, ModelInfo
+
+
+def _model_help(info: ModelInfo) -> str:
+    """Format help text: source / input cost / output cost / context window."""
+    source = info.provider.capitalize()
+    if info.input_price_per_m == 0:
+        return f"{source} / Free / {info.max_context_tokens // 1000}k"
+    return (
+        f"{source} / ${info.input_price_per_m:.2f}"
+        f" / ${info.output_price_per_m:.2f}"
+        f" / {info.max_context_tokens // 1000}k"
+    )
 
 
 class ArchieCommands(Provider):
@@ -32,7 +44,7 @@ class ArchieCommands(Provider):
                 1.0,
                 f"Change Model → {info.name}",
                 self._make_change_model(model_id),
-                help=f"Switch to {info.name} (next turn)",
+                help=_model_help(info),
             )
         # Session management
         yield Hit(
@@ -61,7 +73,7 @@ class ArchieCommands(Provider):
                     score,
                     matcher.highlight(label),
                     self._make_change_model(model_id),
-                    help=f"Switch to {info.name} (next turn)",
+                    help=_model_help(info),
                 )
 
         # Session management
