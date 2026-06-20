@@ -55,6 +55,7 @@ def registry():
 def _mock_llm(*call_responses):
     """Mock LLM that returns different stream events on each call."""
     mock = MagicMock()
+    mock.model_id = "test-model"
     mock.stream = MagicMock(side_effect=[iter(r) for r in call_responses])
     return mock
 
@@ -209,6 +210,7 @@ class TestInterrupt:
             yield Done(stop_reason="end_turn")
 
         llm = MagicMock()
+        llm.model_id = "test-model"
         llm.stream = MagicMock(side_effect=stream_with_interrupt)
         events = []
         agent = AgentLoop(llm, session, registry, "system", events.append)
@@ -230,6 +232,7 @@ class TestInterrupt:
             yield Done(stop_reason="end_turn")
 
         llm = MagicMock()
+        llm.model_id = "test-model"
         llm.stream = MagicMock(side_effect=stream_immediate_interrupt)
         events = []
         agent = AgentLoop(llm, session, registry, "system", events.append)
@@ -299,6 +302,7 @@ class TestErrorHandling:
 
     def test_llm_exception_emits_turn_error(self, session, registry):
         llm = MagicMock()
+        llm.model_id = "test-model"
         llm.stream = MagicMock(side_effect=RuntimeError("Connection lost"))
         events = []
         agent = AgentLoop(llm, session, registry, "system", events.append)

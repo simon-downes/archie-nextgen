@@ -261,7 +261,7 @@ class AgentLoop:
         turn_log = TurnLog(
             when=datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
             user=user_message,
-            model=self.session.model_id,
+            model=self.llm.model_id,
         )
         total_input = 0
         total_output = 0

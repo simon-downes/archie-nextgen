@@ -510,6 +510,7 @@ class ArchieApp(App):
         """Get or create an LLM client for the given model, based on its provider."""
         info = get_model_info(model_id)
         provider = info.provider
+        target_region = info.region or self.config.region
 
         if provider not in self._clients:
             if provider == "ollama":
@@ -522,11 +523,20 @@ class ArchieApp(App):
             else:
                 self._clients[provider] = BedrockClient(
                     model_id=model_id,
-                    region=info.region or self.config.region,
+                    region=target_region,
                     max_output_tokens=info.max_output_tokens,
                 )
         else:
-            self._clients[provider].model_id = model_id
+            existing = self._clients[provider]
+            # Bedrock clients are region-bound — recreate if region changes
+            if provider == "bedrock" and getattr(existing, "_region", None) != target_region:
+                self._clients[provider] = BedrockClient(
+                    model_id=model_id,
+                    region=target_region,
+                    max_output_tokens=info.max_output_tokens,
+                )
+            else:
+                existing.model_id = model_id
 
         return self._clients[provider]
 
@@ -542,8 +552,16 @@ class ArchieApp(App):
         self.model_info = get_model_info(model_id)
 
         if self.model_info.provider == old_provider:
-            # Same provider — just swap the model ID on the existing client
-            self.llm.model_id = model_id
+            # Same provider — check if region changed (bedrock clients are region-bound)
+            new_region = self.model_info.region or self.config.region
+            if (
+                self.model_info.provider == "bedrock"
+                and getattr(self.llm, "_region", None) != new_region
+            ):
+                self.llm = self._get_client(model_id)
+                self._agent.llm = self.llm
+            else:
+                self.llm.model_id = model_id
         else:
             # Different provider — get or create the appropriate client
             self.llm = self._get_client(model_id)

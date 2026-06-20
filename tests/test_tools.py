@@ -410,6 +410,7 @@ class TestSelfTruncating:
         session._log_path = tmp_path / "test.jsonl"
 
         llm = MagicMock()
+        llm.model_id = "test-model"
         llm.stream = MagicMock(
             side_effect=[
                 iter(
@@ -455,6 +456,7 @@ class TestSelfTruncating:
         session._log_path = tmp_path / "test.jsonl"
 
         llm = MagicMock()
+        llm.model_id = "test-model"
         llm.stream = MagicMock(
             side_effect=[
                 iter(

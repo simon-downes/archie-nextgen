@@ -55,6 +55,7 @@ def registry():
 
 def _mock_llm(*call_responses):
     mock = MagicMock()
+    mock.model_id = "test-model"
     mock.stream = MagicMock(side_effect=[iter(r) for r in call_responses])
     return mock
 
@@ -174,7 +175,7 @@ class TestEvictionLogic:
         session.add_turn("assistant", [TextBlock(text="Sure")])
 
         agent = AgentLoop(
-            MagicMock(), session, registry, "system", lambda _: None, artifact_store=store
+            MagicMock(model_id="test-model"), session, registry, "system", lambda _: None, artifact_store=store
         )
         agent._completed_turns = 3
 
@@ -225,7 +226,7 @@ class TestEvictionLogic:
         )
 
         agent = AgentLoop(
-            MagicMock(), session, registry, "system", lambda _: None, artifact_store=store
+            MagicMock(model_id="test-model"), session, registry, "system", lambda _: None, artifact_store=store
         )
         agent._completed_turns = 3
 
@@ -454,7 +455,7 @@ class TestEvictionInvalidatesMtimeCache:
         session.add_turn("assistant", [TextBlock(text="Sure")])
 
         agent = AgentLoop(
-            MagicMock(),
+            MagicMock(model_id="test-model"),
             session,
             registry,
             "system",

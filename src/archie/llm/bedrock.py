@@ -133,6 +133,7 @@ class BedrockClient:
 
     def __init__(self, model_id: str, region: str, max_output_tokens: int = 32_768):
         self.model_id = model_id
+        self._region = region
         self.max_output_tokens = max_output_tokens
         self.client = boto3.client(
             "bedrock-runtime",
