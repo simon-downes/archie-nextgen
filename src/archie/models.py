@@ -108,15 +108,15 @@ MODELS: dict[str, ModelInfo] = {
         max_output_tokens=16_000,
         input_price_per_m=0.60,
         output_price_per_m=1.44,
-        region="eu-west-1",  # Ireland — cheaper region, in-region endpoint only
+        region="eu-west-2",  # Ireland — cheaper region, in-region endpoint only
         supports_cache=False,
     ),
     "qwen.qwen3-coder-480b-a35b-v1:0": ModelInfo(
         name="Qwen3 Coder 480B A35B",
         max_context_tokens=128_000,
         max_output_tokens=16_000,
-        input_price_per_m=0.70,
-        output_price_per_m=2.79,
+        input_price_per_m=1.225,
+        output_price_per_m=4.8825,
         region="eu-west-2",  # London — in-region endpoint only
         supports_cache=False,
     ),
