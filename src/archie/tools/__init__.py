@@ -195,6 +195,7 @@ def create_default_registry(
     """
     from archie.tools.code import make_code_spec
     from archie.tools.edit_file import make_edit_file_spec
+    from archie.tools.glob import make_glob_spec
     from archie.tools.read import make_read_spec
     from archie.tools.search_files import make_search_files_spec
     from archie.tools.web_fetch import make_web_fetch_spec
@@ -212,6 +213,7 @@ def create_default_registry(
 
     registry.register(make_read_spec(cwd, allowed_directories, mtime_cache))
     registry.register(make_search_files_spec(cwd, allowed_directories))
+    registry.register(make_glob_spec(cwd, allowed_directories))
     registry.register(
         make_write_file_spec(cwd, allowed_directories, mtime_cache, pre_content_stash)
     )

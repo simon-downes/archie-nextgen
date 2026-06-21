@@ -208,9 +208,9 @@ def format_tool_pending(name: str, params: dict, cwd: Path) -> str:
                 return f"Read {_hi(path)}"
             offset = params.get("offset", 1)
             limit = params.get("limit")
-            start = max(offset, 1)
+            start = max(int(offset), 1)
             if limit:
-                end = start + limit - 1
+                end = start + int(limit) - 1
                 return f"Read {_hi(path)} {_dim(f'(L{start}\u2013{end})')}"
             return f"Read {_hi(path)} {_dim(f'(L{start}\u2013?)')}"
 
