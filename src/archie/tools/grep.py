@@ -58,7 +58,9 @@ def make_grep_spec(cwd: Path, allowed_directories: list[Path]) -> ToolSpec:
         if context > 0:
             # -C yields context lines before AND after each match
             cmd.extend(["-C", str(context)])
-        cmd.extend(["--max-count", "200"])  # Per-file match limit (safety against pathological regexes)
+        cmd.extend(
+            ["--max-count", "200"]
+        )  # Per-file match limit (safety against pathological regexes)
         if glob_filter:
             # -g filters by glob pattern (e.g. "*.py" for Python files only)
             cmd.extend(["-g", glob_filter])

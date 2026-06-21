@@ -205,9 +205,7 @@ def test_stream_multiple_tool_calls(mock_client):
     )
 
     assert events[0] == ToolUseEvent(tool_use_id="tu_1", name="read_file", input={"path": "a.py"})
-    assert events[1] == ToolUseEvent(
-        tool_use_id="tu_2", name="grep", input={"pattern": "TODO"}
-    )
+    assert events[1] == ToolUseEvent(tool_use_id="tu_2", name="grep", input={"pattern": "TODO"})
 
 
 def test_stream_truncated_tool_args_flagged(mock_client):

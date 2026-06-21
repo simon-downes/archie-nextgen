@@ -175,7 +175,12 @@ class TestEvictionLogic:
         session.add_turn("assistant", [TextBlock(text="Sure")])
 
         agent = AgentLoop(
-            MagicMock(model_id="test-model"), session, registry, "system", lambda _: None, artifact_store=store
+            MagicMock(model_id="test-model"),
+            session,
+            registry,
+            "system",
+            lambda _: None,
+            artifact_store=store,
         )
         agent._completed_turns = 3
 
@@ -226,7 +231,12 @@ class TestEvictionLogic:
         )
 
         agent = AgentLoop(
-            MagicMock(model_id="test-model"), session, registry, "system", lambda _: None, artifact_store=store
+            MagicMock(model_id="test-model"),
+            session,
+            registry,
+            "system",
+            lambda _: None,
+            artifact_store=store,
         )
         agent._completed_turns = 3
 

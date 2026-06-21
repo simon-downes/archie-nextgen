@@ -37,6 +37,7 @@ class Symbol:
     name: str
     kind: str  # "function", "class", "method", "interface", etc.
     line: int  # 1-based line number
+    end_line: int  # 1-based end line (inclusive)
     signature: str  # e.g. "def run_turn(self, user_message) -> None"
     children: list["Symbol"] = field(default_factory=list)
 
@@ -298,38 +299,155 @@ def _text(node, source: bytes) -> str:
 def _extract_python(root, source: bytes) -> list[Symbol]:
     """Extract symbols from Python AST."""
     symbols = []
+
+    # Collect all imports first
+    imports = _extract_python_imports(root, source)
+    if imports:
+        symbols.append(imports)
+
+    # Then extract other top-level symbols
     for node in root.children:
         if node.type == "function_definition":
             symbols.append(_python_function(node, source))
         elif node.type == "class_definition":
             symbols.append(_python_class(node, source))
         elif node.type == "decorated_definition":
-            # Unwrap decorator to get the actual definition
+            # Extract decorators first
+            decorators = []
+            func_or_class_node = None
             for child in node.children:
-                if child.type == "function_definition":
-                    symbols.append(_python_function(child, source))
-                elif child.type == "class_definition":
-                    symbols.append(_python_class(child, source))
+                if child.type == "decorator":
+                    # Extract decorator name (handle foo.bar decorators)
+                    dec_name = _extract_decorator_name(child, source)
+                    decorators.append(
+                        Symbol(
+                            name=dec_name,
+                            kind="decorator",
+                            line=child.start_point.row + 1,
+                            end_line=child.end_point.row + 1,
+                            signature=f"@{dec_name}",
+                        )
+                    )
+                elif child.type in ("function_definition", "class_definition"):
+                    func_or_class_node = child
+
+            if func_or_class_node:
+                if func_or_class_node.type == "function_definition":
+                    symbols.append(_python_function(func_or_class_node, source, decorators))
+                elif func_or_class_node.type == "class_definition":
+                    symbols.append(_python_class(func_or_class_node, source, decorators))
+        elif node.type == "expression_statement":
+            # Check for module-level constant (ALL_CAPS or type-annotated assignment)
+            for child in node.children:
+                if child.type == "assignment":
+                    sym = _python_constant(child, source)
+                    if sym:
+                        symbols.append(sym)
     return symbols
 
 
-def _python_function(node, source: bytes) -> Symbol:
+def _extract_python_imports(root, source: bytes) -> Symbol | None:
+    """Collect all import statements into a single Symbol."""
+    import_nodes = []
+    for node in root.children:
+        if node.type == "import_statement":
+            import_nodes.append(node)
+        elif node.type == "import_from_statement":
+            import_nodes.append(node)
+
+    if not import_nodes:
+        return None
+
+    # Get first line to last line range
+    first_line = import_nodes[0].start_point.row + 1
+    last_line = import_nodes[-1].end_point.row + 1
+
+    # Extract module names for signature
+    modules = []
+    for node in import_nodes:
+        if node.type == "import_statement":
+            # import a, b, c
+            for child in node.children:
+                if child.type == "dotted_name":
+                    modules.append(_text(child, source))
+        elif node.type == "import_from_statement":
+            # from module import ...
+            for child in node.children:
+                if child.type == "dotted_name":
+                    modules.append(_text(child, source))
+                    break  # Only first dotted_name is the module
+
+    modules_str = ", ".join(modules[:5])  # Limit to 5 for brevity
+    if len(modules) > 5:
+        modules_str += f", ... (+{len(modules) - 5} more)"
+
+    return Symbol(
+        name="imports",
+        kind="imports",
+        line=first_line,
+        end_line=last_line,
+        signature=f"imports: [line {first_line}-{last_line}]",
+        children=[Symbol(m, "import", first_line, last_line, f"import {m}") for m in modules[:5]],
+    )
+
+
+def _python_function(node, source: bytes, decorators: list[Symbol] | None = None) -> Symbol:
     """Build a Symbol for a Python function_definition node."""
     name = _text(node.child_by_field_name("name"), source)
     params = _text(node.child_by_field_name("parameters"), source)
     ret_node = node.child_by_field_name("return_type")
     ret = f" -> {_text(ret_node, source)}" if ret_node else ""
+
+    # Get line range - if decorators exist, extend to include them
+    start_line = node.start_point.row + 1
+    if decorators:
+        # Find the decorator nodes
+        start_line = min(d.line for d in decorators)
+
+    # Build signature with decorators prepended
+    signature = f"def {name}{params}{ret}"
+    if decorators:
+        decorator_str = "\n".join(f"@{d.name}" for d in decorators)
+        signature = f"{decorator_str}\n{signature}"
+
     return Symbol(
         name=name,
         kind="function",
-        line=node.start_point.row + 1,
-        signature=f"def {name}{params}{ret}",
+        line=start_line,
+        end_line=node.end_point.row + 1,
+        signature=signature,
     )
 
 
-def _python_class(node, source: bytes) -> Symbol:
-    """Build a Symbol for a Python class_definition node (including methods)."""
+def _extract_decorator_name(decorator_node, source: bytes) -> str:
+    """Extract decorator name from a decorator node (handles @foo.bar.baz or @foo())."""
+    # Decorator node: @ followed by identifier, attribute, or call_expression
+    for child in decorator_node.children:
+        if child.type == "identifier":
+            return _text(child, source)
+        elif child.type == "attribute":
+            return _text(child, source)
+        elif child.type == "call_expression":
+            # For @decorator(args), extract the function name before the paren
+            for sub in child.children:
+                if sub.type == "identifier":
+                    return _text(sub, source)
+                elif sub.type == "attribute":
+                    return _text(sub, source)
+
+    return "?"
+
+
+def _python_class(node, source: bytes, decorators: list[Symbol] | None = None) -> Symbol:
+    """Build a Symbol for a Python class_definition node (including methods and fields)."""
     name = _text(node.child_by_field_name("name"), source)
+
+    # Build signature with decorators
+    signature = f"class {name}"
+    if decorators:
+        decorator_str = "\n".join(f"@{d.name}" for d in decorators)
+        signature = f"{decorator_str}\n{signature}"
+
     body = node.child_by_field_name("body")
     children = []
     if body:
@@ -344,12 +462,88 @@ def _python_class(node, source: bytes) -> Symbol:
                         sym = _python_function(sub, source)
                         sym.kind = "method"
                         children.append(sym)
+            elif child.type == "expression_statement":
+                # Check for class field (assignment)
+                for expr in child.children:
+                    if expr.type == "assignment":
+                        sym = _python_field(expr, source)
+                        if sym:
+                            children.append(sym)
+
     return Symbol(
         name=name,
         kind="class",
         line=node.start_point.row + 1,
-        signature=f"class {name}",
+        end_line=node.end_point.row + 1,
+        signature=signature,
         children=children,
+    )
+
+
+def _python_field(node, source: bytes) -> Symbol | None:
+    """Build a Symbol for a Python class field (assigned variable in class body)."""
+    # Must be an annotation or a typed assignment
+    if not node.children or node.children[0].type != "identifier":
+        return None
+
+    target_name = _text(node.children[0], source)
+
+    # Check for type annotation
+    type_node = None
+    if len(node.children) >= 3 and node.children[1].type == ":":
+        # Annotated assignment like: x: int = 1
+        type_node = node.children[2]
+
+    if not type_node:
+        return None
+
+    type_hint = f": {_text(type_node, source)}"
+
+    return Symbol(
+        name=target_name,
+        kind="field",
+        line=node.start_point.row + 1,
+        end_line=node.end_point.row + 1,
+        signature=f"{target_name}{type_hint}",
+    )
+
+
+def _python_constant(node, source: bytes) -> Symbol | None:
+    """Build a Symbol for a Python module-level constant."""
+    # Must be simple assignment with identifier as first child
+    if not node.children or node.children[0].type != "identifier":
+        return None
+
+    name = _text(node.children[0], source)
+
+    # Check if ALL_CAPS or has type annotation
+    # ALL_CAPS check: all uppercase AND at least one underscore or is very short
+    is_all_caps = name.isupper() and ("_" in name or len(name) <= 2)
+
+    # Check for type annotation (third child is colon for annotated assignments)
+    has_type = False
+    if len(node.children) >= 4 and node.children[2].type == ":":
+        has_type = True
+
+    if not (is_all_caps or has_type):
+        return None
+
+    # Get type annotation if present
+    type_node = None
+    if len(node.children) >= 4 and node.children[2].type == ":":
+        for child in node.children[3:]:
+            if child.type not in (" ", "\n"):
+                type_node = child
+                break
+
+    type_hint = f": {_text(type_node, source)}" if type_node else ""
+
+    return Symbol(
+        name=name,
+        kind="constant",
+        line=node.start_point.row + 1,
+        end_line=node.end_point.row + 1,
+        signature=f"{name}{type_hint}",
     )
 
 
@@ -386,6 +580,7 @@ def _js_function(node, source: bytes) -> Symbol:
         name=name,
         kind="function",
         line=node.start_point.row + 1,
+        end_line=node.end_point.row + 1,
         signature=f"function {name}{params}{ret}",
     )
 
@@ -408,6 +603,7 @@ def _js_class(node, source: bytes) -> Symbol:
                         name=mname,
                         kind="method",
                         line=child.start_point.row + 1,
+                        end_line=child.end_point.row + 1,
                         signature=f"{mname}{params}",
                     )
                 )
@@ -415,6 +611,7 @@ def _js_class(node, source: bytes) -> Symbol:
         name=name,
         kind="class",
         line=node.start_point.row + 1,
+        end_line=node.end_point.row + 1,
         signature=f"class {name}",
         children=children,
     )
@@ -436,6 +633,7 @@ def _js_variable(node, source: bytes) -> list[Symbol]:
                             name=name,
                             kind="function",
                             line=child.start_point.row + 1,
+                            end_line=child.end_point.row + 1,
                             signature=f"const {name} = ...",
                         )
                     )
@@ -458,6 +656,7 @@ def _extract_go(root, source: bytes) -> list[Symbol]:
                     name=name,
                     kind="function",
                     line=node.start_point.row + 1,
+                    end_line=node.end_point.row + 1,
                     signature=f"func {name}{params}{ret}",
                 )
             )
@@ -473,6 +672,7 @@ def _extract_go(root, source: bytes) -> list[Symbol]:
                     name=name,
                     kind="method",
                     line=node.start_point.row + 1,
+                    end_line=node.end_point.row + 1,
                     signature=f"func {recv} {name}{params}",
                 )
             )
@@ -490,6 +690,7 @@ def _extract_go(root, source: bytes) -> list[Symbol]:
                             name=name,
                             kind=kind,
                             line=spec.start_point.row + 1,
+                            end_line=spec.end_point.row + 1,
                             signature=f"type {name}",
                         )
                     )
@@ -512,6 +713,7 @@ def _extract_rust(root, source: bytes) -> list[Symbol]:
                     name=name,
                     kind="function",
                     line=node.start_point.row + 1,
+                    end_line=node.end_point.row + 1,
                     signature=f"fn {name}{params}{ret}",
                 )
             )
@@ -524,6 +726,7 @@ def _extract_rust(root, source: bytes) -> list[Symbol]:
                     name=name,
                     kind=kind,
                     line=node.start_point.row + 1,
+                    end_line=node.end_point.row + 1,
                     signature=f"{kind} {name}",
                 )
             )
@@ -545,6 +748,7 @@ def _extract_rust(root, source: bytes) -> list[Symbol]:
                                 name=fn_name,
                                 kind="method",
                                 line=child.start_point.row + 1,
+                                end_line=child.end_point.row + 1,
                                 signature=f"fn {fn_name}(...)",
                             )
                         )
@@ -553,6 +757,7 @@ def _extract_rust(root, source: bytes) -> list[Symbol]:
                     name=type_name,
                     kind="impl",
                     line=node.start_point.row + 1,
+                    end_line=node.end_point.row + 1,
                     signature=f"impl {type_name}",
                     children=children,
                 )
@@ -581,6 +786,7 @@ def _extract_php_node(node, source: bytes, symbols: list[Symbol]) -> None:
                 name=name,
                 kind="function",
                 line=node.start_point.row + 1,
+                end_line=node.end_point.row + 1,
                 signature=f"function {name}{params}",
             )
         )
@@ -602,6 +808,7 @@ def _extract_php_node(node, source: bytes, symbols: list[Symbol]) -> None:
                             name=mname,
                             kind="method",
                             line=child.start_point.row + 1,
+                            end_line=child.end_point.row + 1,
                             signature=f"{mname}()",
                         )
                     )
@@ -610,6 +817,7 @@ def _extract_php_node(node, source: bytes, symbols: list[Symbol]) -> None:
                 name=name,
                 kind="class",
                 line=node.start_point.row + 1,
+                end_line=node.end_point.row + 1,
                 signature=f"class {name}",
                 children=children,
             )
@@ -633,6 +841,7 @@ def _extract_css(root, source: bytes) -> list[Symbol]:
                         name=text,
                         kind="selector",
                         line=node.start_point.row + 1,
+                        end_line=node.end_point.row + 1,
                         signature=text,
                     )
                 )
@@ -655,6 +864,7 @@ def _extract_hcl(root, source: bytes) -> list[Symbol]:
                     name=name,
                     kind=kind,
                     line=node.start_point.row + 1,
+                    end_line=node.end_point.row + 1,
                     signature=name,
                 )
             )
