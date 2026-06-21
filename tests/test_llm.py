@@ -186,7 +186,7 @@ def test_stream_multiple_tool_calls(mock_client):
             # Second tool call
             {
                 "contentBlockStart": {
-                    "start": {"toolUse": {"toolUseId": "tu_2", "name": "search_files"}},
+                    "start": {"toolUse": {"toolUseId": "tu_2", "name": "grep"}},
                     "contentBlockIndex": 1,
                 }
             },
@@ -206,7 +206,7 @@ def test_stream_multiple_tool_calls(mock_client):
 
     assert events[0] == ToolUseEvent(tool_use_id="tu_1", name="read_file", input={"path": "a.py"})
     assert events[1] == ToolUseEvent(
-        tool_use_id="tu_2", name="search_files", input={"pattern": "TODO"}
+        tool_use_id="tu_2", name="grep", input={"pattern": "TODO"}
     )
 
 

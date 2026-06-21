@@ -12,7 +12,7 @@ import json
 import logging
 import sqlite3
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from archie.tools import ToolSpec, tool_error, tool_result
@@ -171,7 +171,7 @@ def make_recall_spec(brain_dir: Path) -> ToolSpec:
     )
 
 
-def _file_date(path: Path) -> datetime.date | None:
+def _file_date(path: Path) -> datetime | None:
     """Extract date from memory filename (YYYY-MM-DD-project.jsonl)."""
     parts = path.stem.split("-")
     if len(parts) >= 3:

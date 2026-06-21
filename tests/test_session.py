@@ -181,9 +181,9 @@ class TestSummariseToolOutput:
         output = "src/a.py\nsrc/b.py\nsrc/c.py"
         assert summarise_tool_output("read", {"path": "src"}, output, False) == "3 files"
 
-    def test_search_files(self):
-        output = "src/a.py:1:match1\nsrc/b.py:2:match2\n"
-        assert summarise_tool_output("search_files", {"pattern": "x"}, output, False) == "2 matches"
+    def test_grep(self):
+        output = "src/a.py:\n  1| match1\nsrc/b.py:\n  2| match2\n"
+        assert summarise_tool_output("grep", {"pattern": "x"}, output, False) == "2 matches"
 
     def test_error(self):
         output = "Error: file not found\nsome detail"

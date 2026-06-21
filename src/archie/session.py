@@ -260,8 +260,8 @@ def summarise_tool_output(name: str, tool_input: dict, output: str, is_error: bo
         case "write_file" | "edit_file":
             # These already return concise messages like "Written: path (42 lines)"
             return output[:100]
-        case "search_files":
-            match_count = output.count("\n")
+        case "search_files" | "grep":
+            match_count = output.count("|")
             return f"{match_count} matches"
         case "shell":
             # Parse exit code from our format "[exit: N]"

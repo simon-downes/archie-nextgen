@@ -5,8 +5,8 @@ from unittest.mock import patch
 import pytest
 
 from archie.tools import ToolRegistry, ToolSpec, truncate_result, validate_path
+from archie.tools.grep import make_grep_spec
 from archie.tools.read import make_read_spec
-from archie.tools.search_files import make_search_files_spec
 
 # --- validate_path tests ---
 
@@ -182,11 +182,14 @@ class TestReadFile:
 # --- search_files tool tests ---
 
 
-class TestSearchFiles:
+# --- grep tool tests ---
+
+
+class TestGrep:
     @pytest.fixture
     def tool(self, tmp_path):
-        """Create a search_files tool bound to tmp_path."""
-        return make_search_files_spec(tmp_path, [])
+        """Create a grep tool bound to tmp_path."""
+        return make_grep_spec(tmp_path, [])
 
     def test_finds_matches(self, tmp_path, tool):
         """Finds matching lines in files."""
@@ -221,20 +224,62 @@ class TestSearchFiles:
         result = tool.handler({"pattern": ""})
         assert "Error:" in result
 
-    def test_pagination_cap(self, tmp_path, tool):
-        """Results are capped and show pagination hint when truncated."""
-        # Create a file with many matches
-        content = "\n".join(f"match_{i}" for i in range(100))
-        (tmp_path / "many.txt").write_text(content)
-        result = tool.handler({"pattern": "match_", "path": ".", "limit": 5})
-        assert "Use offset=" in result
+    def test_context_output(self, tmp_path, tool):
+        """Context lines shown with colon separator."""
+        f = tmp_path / "test.py"
+        f.write_text("line1\ntarget\nline3\n")
+        result = tool.handler({"pattern": "target", "path": ".", "context": 1})
+        assert "line1:" in result or ": line1" in result
+        assert "target|" in result or "| target" in result
 
     def test_rg_not_installed(self, tmp_path, tool):
         """Handles missing ripgrep gracefully."""
-        with patch("archie.tools.search_files.subprocess.run", side_effect=FileNotFoundError):
+        with patch("archie.tools.grep.subprocess.run", side_effect=FileNotFoundError):
             result = tool.handler({"pattern": "test", "path": "."})
         assert "Error:" in result
         assert "not installed" in result
+
+
+def _count_file_groups(matches: list[tuple[int, str, bool]], context: int) -> int:
+    """Helper to count groups for tests."""
+    groups = _segment_matches(matches, context)
+    return len(groups)
+
+
+def _segment_matches(
+    matches: list[tuple[int, str, bool]], context: int
+) -> list[list[tuple[int, str, bool]]]:
+    """Helper to segment matches for tests."""
+    if not matches:
+        return []
+
+    groups: list[list[tuple[int, str, bool]]] = []
+    current_group: list[tuple[int, str, bool]] = []
+
+    for lineno, text, is_match in matches:
+        if not is_match:
+            if current_group:
+                current_group.append((lineno, text, False))
+            continue
+
+        if not current_group:
+            current_group.append((lineno, text, True))
+        else:
+            last_lineno = current_group[-1][0]
+            gap = lineno - last_lineno
+            if gap > 1 + 2 * context:
+                groups.append(current_group)
+                current_group = [(lineno, text, True)]
+            else:
+                current_group.append((lineno, text, True))
+
+    if current_group:
+        groups.append(current_group)
+
+    return groups
+
+
+# --- grep tool tests ---
 
 
 class TestReadFileMtimeDedup:
