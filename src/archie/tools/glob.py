@@ -95,24 +95,28 @@ def make_glob_spec(cwd: Path, allowed_directories: list[Path]) -> ToolSpec:
         output_lines = []
         for file_path, _ in display_files:
             try:
-                # If search path is under cwd, show relative to cwd
                 if search_path.resolve() == cwd.resolve():
                     rel_path = os.path.relpath(file_path, cwd)
                 else:
-                    # If search path is different, compute relative to search_path
                     rel_path = os.path.relpath(file_path, search_path)
                 output_lines.append(rel_path)
             except ValueError:
-                # Different drives on Windows, use absolute path
                 output_lines.append(file_path)
+
+        # Header with count and sort order
+        if truncated:
+            header = f"{limit} files shown of {total_count}, most recent first. Narrow the pattern for more."
+        else:
+            header = f"{total_count} files, most recent first"
+
+        result_str = header + "\n\n" + "\n".join(output_lines)
+        return tool_result(result_str)
 
         result_str = "\n".join(output_lines)
 
         # Add summary line if truncated
         if truncated:
             result_str += f"\n\n{limit} files shown of {total_count}. Narrow the pattern for more."
-
-        return tool_result(result_str)
 
     return ToolSpec(
         name="glob",
