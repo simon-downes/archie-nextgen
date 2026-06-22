@@ -323,3 +323,50 @@ def debug_cmd(tool_name, params_json, schema, list_tools):
     from archie.debug import run_debug
 
     run_debug(tool_name, params_json, schema, list_tools)
+
+
+@main.command(name="shell")
+def shell_cmd():
+    """Open an interactive bash shell in a sandbox container.
+
+    Starts a container identical to what a chat session uses (same image,
+    mounts, user, working directory) then attaches interactively. The
+    container is destroyed on exit.
+    """
+    import os
+
+    from archie.config import load_config
+    from archie.sandbox import Sandbox
+
+    try:
+        config = load_config()
+    except (KeyError, ValueError) as e:
+        raise click.ClickException(str(e)) from None
+
+    check_docker_available()
+    check_sandbox_image(config.sandbox.image)
+
+    project_dir = Path.cwd()
+    sandbox = Sandbox(
+        config=config.sandbox,
+        project_dir=project_dir,
+        session_id="shell",
+        username=os.environ.get("USER", "archie"),
+        uid=os.getuid(),
+    )
+
+    click.echo(f"Starting sandbox: {config.sandbox.image}")
+    click.echo(f"  Project: {project_dir} → /workspace")
+    click.echo(f"  Container: {sandbox.container_name}")
+    click.echo()
+
+    try:
+        sandbox.ensure_running()
+        # Attach interactively
+        result = subprocess.run(
+            ["docker", "exec", "-it", "-w", "/workspace", sandbox.container_name, "bash"],
+            check=False,
+        )
+        sys.exit(result.returncode)
+    finally:
+        sandbox.destroy()
