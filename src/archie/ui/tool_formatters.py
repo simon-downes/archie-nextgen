@@ -318,15 +318,101 @@ def format_tool_complete(name: str, params: dict, result: str, is_error: bool, c
         case "read":
             path = _rel_path(params.get("path", ""), cwd)
             if "unchanged since last read" in result:
-                offset = params.get("offset", 0)
-                limit = params.get("limit", None)
-                if not offset and not limit:
-                    return f"Read {_hi(path)} {_dim('(cached)')}"
-                start = offset + 1 if offset else 1
-                end = start + (limit or 0) - 1
-                return f"Read {_hi(path)} {_dim(f'(L{start}\u2013{end} - cached)')}"
-            range_str = _read_file_range(params, result)
-            return f"Read {_hi(path)} {_dim(range_str)}"
+                return f"read {_hi(path)} {_dim('(cached)')}"
+            # Directory mode
+            if "files," in result and "dirs)" in result:
+                # Extract from header "path/ (N files, M dirs)"
+                try:
+                    parts = result.split("(")[1].split(")")[0]
+                    return f"read {_hi(path)} {_dim(f'({parts})')}"
+                except (IndexError, ValueError):
+                    pass
+                return f"read {_hi(path)}"
+            # File mode — extract line range
+            # Parse total lines from header "File: ... (N lines)"
+            total = ""
+            for line in result.split("\n")[:3]:
+                if "lines)" in line:
+                    try:
+                        total = line.split("(")[1].split(" lines")[0]
+                    except (IndexError, ValueError):
+                        pass
+                    break
+            # Determine actual lines shown
+            content_lines = [x for x in result.split("\n") if x and "|" in x[:8]]
+            if content_lines:
+                first = content_lines[0].split("|")[0].strip()
+                last = content_lines[-1].split("|")[0].strip()
+                range_str = f"L{first}–{last}"
+                if total:
+                    range_str += f" of {total}"
+                return f"read {_hi(path)} {_dim(f'({range_str})')}"
+            return f"read {_hi(path)}"
+
+        case "glob":
+            pattern = params.get("pattern", "")
+            path = params.get("path", ".")
+            target = _rel_path(path, cwd).rstrip("/") + "/" + pattern if path != "." else pattern
+            # First line is the header "N files, most recent first" or "N shown of M..."
+            first_line = result.split("\n")[0] if result else ""
+            try:
+                count = int(first_line.split()[0])
+            except (IndexError, ValueError):
+                count = len(
+                    [
+                        x
+                        for x in result.split("\n")
+                        if x.strip() and "files" not in x and "shown" not in x
+                    ]
+                )
+            return f"glob {_hi(target)} {_dim(f'({count} files)')}"
+
+        case "grep":
+            pattern = params.get("pattern", "")
+            path = params.get("path", ".")
+            glob_filter = params.get("glob", "")
+            target = _rel_path(path, cwd)
+            if glob_filter:
+                target = target.rstrip("/") + "/" + glob_filter
+            if "No matches found" in result:
+                return f"grep {_hi(pattern)} in {_hi(target)} {_dim('(no matches)')}"
+            # Count matches (lines with |) and files (lines ending with :)
+            match_count = sum(1 for x in result.split("\n") if "|" in x[:8])
+            file_count = sum(
+                1 for x in result.split("\n") if x.rstrip().endswith(":") and not x.startswith(" ")
+            )
+            return f"grep {_hi(pattern)} in {_hi(target)} {_dim(f'({match_count} matches in {file_count} files)')}"
+
+        case "code":
+            path = _rel_path(params.get("path", "."), cwd)
+            name_param = params.get("name", "")
+            if name_param:
+                # Search mode — "Found N match(es)"
+                match_count = 0
+                if "Found" in result:
+                    try:
+                        match_count = int(result.split("Found")[1].split()[0])
+                    except (IndexError, ValueError):
+                        pass
+                # Count unique files in results
+                file_set = set()
+                for line in result.split("\n"):
+                    if ":" in line and "—" in line and not line.startswith("Found"):
+                        file_set.add(line.split(":")[0].strip())
+                if len(file_set) > 1:
+                    return f"code {_hi(name_param)} in {_hi(path)} {_dim(f'({match_count} symbols in {len(file_set)} files)')}"
+                return f"code {_hi(name_param)} in {_hi(path)} {_dim(f'({match_count} symbols)')}"
+            else:
+                # Outline mode — count symbols
+                symbol_lines = [x for x in result.split("\n") if x.strip() and "[line " in x]
+                symbol_count = len(symbol_lines)
+                # Count unique files (lines containing .py or similar with line ranges)
+                file_headers = [
+                    x for x in result.split("\n") if x.strip() and "(" in x and "lines)" in x
+                ]
+                if len(file_headers) > 1:
+                    return f"code {_hi(path)} {_dim(f'({symbol_count} symbols in {len(file_headers)} files)')}"
+                return f"code {_hi(path)} {_dim(f'({symbol_count} symbols)')}"
 
         case "write_file":
             path = _rel_path(params.get("path", ""), cwd)
@@ -348,73 +434,12 @@ def format_tool_complete(name: str, params: dict, result: str, is_error: bool, c
                 return f"Edit {_hi(path)} {_dim(f'({count} edits)')}"
             return f"Edit {_hi(path)}"
 
-        case "list_files":
-            path = params.get("path", ".")
-            glob_val = params.get("glob", "")
-            if glob_val:
-                target = path.rstrip("/") + "/" + glob_val if path != "." else glob_val
-            else:
-                target = _rel_path(path, cwd)
-
-            if "No files found" in result:
-                suffix = "(no matches)" if glob_val else "(empty)"
-                return f"List {_hi(target)} {_dim(suffix)}"
-
-            shown, total = _list_file_count(result)
-            if total:
-                return f"List {_hi(target)} {_dim(f'({shown} of {total} files)')}"
-            return f"List {_hi(target)} {_dim(f'({shown} files)')}"
-
-        case "search_files":
-            pattern = params.get("pattern", "")
-            path = params.get("path", ".")
-            glob = params.get("glob", "")
-            target = _rel_path(path, cwd)
-            if glob:
-                target = target.rstrip("/") + "/" + glob if target != "." else glob
-
-            count = _search_match_count(result)
-            if count == 0:
-                return f"Search {_hi(pattern)} in {_hi(target)} {_dim('(no matches)')}"
-            return f"Search {_hi(pattern)} in {_hi(target)} {_dim(f'({count} matches)')}"
-
         case "shell":
             command = params.get("command", "")
             exit_code = _parse_shell_exit(result)
             if exit_code and exit_code != 0:
                 return f"Shell {_hi(command)} {_dim(f'(exit {exit_code})')}"
             return f"Shell {_hi(command)}"
-
-        case "code":
-            op = params.get("operation", "")
-            match op:
-                case "outline":
-                    path = _rel_path(params.get("path", ""), cwd)
-                    if "No symbols found" in result:
-                        return f"Code outline {_hi(path)} {_dim('(no symbols)')}"
-                    lines = result.split("\n")[2:]
-                    count = sum(1 for line in lines if line.strip())
-                    return f"Code outline {_hi(path)} {_dim(f'({count} symbols)')}"
-                case "search":
-                    name_param = params.get("name", "")
-                    lang = params.get("language", "")
-                    count = _code_result_count(result)
-                    if lang:
-                        return f"Code search {_hi(name_param)} {_dim(f'[{lang}]')} {_dim(f'({count} results)')}"
-                    return f"Code search {_hi(name_param)} {_dim(f'({count} results)')}"
-                case "overview":
-                    path = _rel_path(params.get("path", "."), cwd)
-                    total, langs = _overview_summary(result)
-                    if total == 0:
-                        return f"Code overview {_hi(path)}"
-                    lang_parts = [f"{pct}% {lang.capitalize()}" for lang, pct in langs[:3]]
-                    suffix = ", ".join(lang_parts) if lang_parts else ""
-                    base = f"Code overview {_hi(path)} ({total} files"
-                    if suffix:
-                        return f"{base} - {suffix})"
-                    return f"{base})"
-                case _:
-                    return f"Code {_esc(op)}"
 
         case "brain":
             op = params.get("operation", "")
