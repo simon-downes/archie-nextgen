@@ -386,6 +386,8 @@ def format_tool_complete(name: str, params: dict, result: str, is_error: bool, c
         case "code":
             path = _rel_path(params.get("path", "."), cwd)
             name_param = params.get("name", "")
+            lang = params.get("language", "")
+            lang_suffix = f" {_dim(lang)}" if lang else ""
             if name_param:
                 # Search mode — "Found N match(es)"
                 match_count = 0
@@ -400,8 +402,8 @@ def format_tool_complete(name: str, params: dict, result: str, is_error: bool, c
                     if ":" in line and "—" in line and not line.startswith("Found"):
                         file_set.add(line.split(":")[0].strip())
                 if len(file_set) > 1:
-                    return f"code {_hi(name_param)} in {_hi(path)} {_dim(f'({match_count} symbols in {len(file_set)} files)')}"
-                return f"code {_hi(name_param)} in {_hi(path)} {_dim(f'({match_count} symbols)')}"
+                    return f"code {_hi(name_param)} in {_hi(path)}{lang_suffix} {_dim(f'({match_count} symbols in {len(file_set)} files)')}"
+                return f"code {_hi(name_param)} in {_hi(path)}{lang_suffix} {_dim(f'({match_count} symbols)')}"
             else:
                 # Outline mode — count symbols
                 symbol_lines = [x for x in result.split("\n") if x.strip() and "[line " in x]
