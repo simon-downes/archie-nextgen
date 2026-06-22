@@ -110,7 +110,7 @@ def make_grep_spec(cwd: Path, allowed_directories: list[Path]) -> ToolSpec:
         files_with_mtime.sort(key=lambda x: x[1], reverse=True)
 
         # --- Format output with match groups and limit ---
-        output_lines = _format_groups(files_with_mtime, context, limit)
+        output_lines = _format_groups(files_with_mtime, context, limit, cwd)
 
         # --- Build result ---
         if not output_lines:
@@ -225,6 +225,7 @@ def _format_groups(
     files_with_mtime: list[tuple[str, float, list[tuple[int, str, bool]]]],
     context: int,
     limit: int,
+    cwd: Path,
 ) -> list[str]:
     """Format match groups with truncation at file and line level.
 
@@ -232,6 +233,7 @@ def _format_groups(
         files_with_mtime: List of (file_path, mtime, matches) sorted by mtime desc
         context: Number of context lines to show around matches
         limit: Max match groups to output
+        cwd: Project root for relativising paths
 
     Returns:
         List of output lines (not joined with newlines yet).
@@ -245,7 +247,7 @@ def _format_groups(
             break
 
         # Format this file's matches into groups
-        file_output = _format_file_groups(file_path, matches, context, limit - groups_counted)
+        file_output = _format_file_groups(file_path, matches, context, limit - groups_counted, cwd)
         if not file_output:
             continue
 
@@ -267,6 +269,7 @@ def _format_file_groups(
     matches: list[tuple[int, str, bool]],
     context: int,
     max_groups: int,
+    cwd: Path,
 ) -> list[str]:
     """Format a single file's matches into groups.
 
@@ -275,6 +278,7 @@ def _format_file_groups(
         matches: List of (lineno, text, is_match) tuples (already sorted by lineno)
         context: Number of context lines to show around matches
         max_groups: Max groups to output for this file
+        cwd: Project root for relativising paths
 
     Returns:
         List of output lines for this file.
@@ -293,8 +297,18 @@ def _format_file_groups(
 
     output_lines: list[str] = []
 
+    # Relativise path — fall back to absolute if outside cwd
+    try:
+        display_path = str(Path(file_path).relative_to(cwd.resolve()))
+    except ValueError:
+        display_path = file_path
+
+    # Determine line number width for consistent alignment
+    max_lineno = max(lineno for group in groups for lineno, _, _ in group)
+    width = len(str(max_lineno))
+
     # Output header
-    output_lines.append(f"{file_path}:")
+    output_lines.append(f"{display_path}:")
 
     for group in groups:
         # Determine range and separator for this group
@@ -310,10 +324,6 @@ def _format_file_groups(
         range_start = min_match - context if context > 0 else min_match
         range_end = max_match + context if context > 0 else max_match
 
-        # Group has match + context lines; determine which separator to use
-        # If context > 0, we use ':' for context lines and '|' for match lines
-        # If context == 0, all lines in group are matches, use '|'
-
         if context > 0:
             # Build a map of line numbers in this group
             group_line_map = {lineno: (text, is_match) for lineno, text, is_match in group}
@@ -321,18 +331,17 @@ def _format_file_groups(
             for lineno in range(range_start, range_end + 1):
                 if lineno in group_line_map:
                     text, is_match = group_line_map[lineno]
-                    # Truncate if needed
                     if len(text) > 500:
                         text = text[:500] + " [...]"
                     sep = "|" if is_match else ":"
-                    output_lines.append(f"  {lineno}{sep} {text}")
+                    output_lines.append(f"  {lineno:>{width}}{sep} {text}")
         else:
             # Match-only mode: only output match lines from this group
             for lineno, text, is_match in group:
                 if is_match:
                     if len(text) > 500:
                         text = text[:500] + " [...]"
-                    output_lines.append(f"  {lineno}| {text}")
+                    output_lines.append(f"  {lineno:>{width}}| {text}")
 
     return output_lines
 
