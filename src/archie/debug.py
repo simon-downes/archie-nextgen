@@ -70,6 +70,14 @@ EXERCISES: dict[str, list[dict]] = {
         # URL only
         {"url": "https://docs.python.org/3/library/dataclasses.html"},
     ],
+    "self_debug": [
+        # Default: recent records at INFO+
+        {"level": "INFO", "tail": 10},
+        # Errors only
+        {"level": "ERROR"},
+        # Specific event type
+        {"event": "tool_end", "tail": 5},
+    ],
     "write_file": [
         # Not exercised by default — would create files
     ],
@@ -109,7 +117,19 @@ def _build_registry(cwd: Path):
     except Exception:
         pass
 
-    return create_default_registry(cwd=cwd, allowed_directories=[], sandbox=sandbox)
+    registry = create_default_registry(cwd=cwd, allowed_directories=[], sandbox=sandbox)
+
+    # Register self_debug if log file exists
+    try:
+        from archie.logs import LOG_PATH
+        from archie.tools.self_debug import make_self_debug_spec
+
+        if LOG_PATH.exists():
+            registry.register(make_self_debug_spec(LOG_PATH, lambda: "debug"))
+    except Exception:
+        pass
+
+    return registry
 
 
 def _run_exercise(tool_spec, params: dict, cwd: Path) -> None:
