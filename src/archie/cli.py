@@ -308,3 +308,18 @@ def reindex():
 
 # Register the brain group as a subcommand of main
 main.add_command(brain)
+
+
+@main.command(name="debug")
+@click.argument("tool_name", required=False)
+@click.argument("params_json", required=False)
+@click.option("--schema", is_flag=True, help="Show the tool's JSON schema.")
+@click.option("--list", "list_tools", is_flag=True, help="List available tools.")
+def debug_cmd(tool_name, params_json, schema, list_tools):
+    """Exercise a tool with default or custom inputs.
+
+    Calls tool handlers directly and prints what the model would receive.
+    """
+    from archie.debug import run_debug
+
+    run_debug(tool_name, params_json, schema, list_tools)
