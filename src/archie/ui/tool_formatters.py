@@ -387,7 +387,7 @@ def format_tool_complete(name: str, params: dict, result: str, is_error: bool, c
             path = _rel_path(params.get("path", "."), cwd)
             name_param = params.get("name", "")
             lang = params.get("language", "")
-            lang_suffix = f" {_dim(lang)}" if lang else ""
+            lang_suffix = f" {_hi(lang)}" if lang else ""
             if name_param:
                 # Search mode — "Found N match(es)"
                 match_count = 0
