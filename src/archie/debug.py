@@ -77,16 +77,39 @@ EXERCISES: dict[str, list[dict]] = {
         # Not exercised by default — would modify files
     ],
     "shell": [
-        # Not exercised — requires sandbox
+        # Simple command
+        {"command": "echo hello"},
+        # Multi-command pipeline
+        {"command": "ls src/archie/tools/*.py | wc -l"},
+        # Exit code handling
+        {"command": "false"},
     ],
 }
 
 
 def _build_registry(cwd: Path):
-    """Build a tool registry against the given cwd. No sandbox, no brain."""
+    """Build a tool registry against the given cwd. Attempts sandbox if Docker available."""
+    import os
+
     from archie.tools import create_default_registry
 
-    return create_default_registry(cwd=cwd, allowed_directories=[])
+    sandbox = None
+    try:
+        from archie.config import load_config
+        from archie.sandbox import Sandbox
+
+        config = load_config()
+        sandbox = Sandbox(
+            config=config.sandbox,
+            project_dir=cwd,
+            session_id="debug",
+            username=os.environ.get("USER", "archie"),
+            uid=os.getuid(),
+        )
+    except Exception:
+        pass
+
+    return create_default_registry(cwd=cwd, allowed_directories=[], sandbox=sandbox)
 
 
 def _run_exercise(tool_spec, params: dict, cwd: Path) -> None:
