@@ -89,8 +89,13 @@ def _build_registry(cwd: Path):
     return create_default_registry(cwd=cwd, allowed_directories=[])
 
 
-def _run_exercise(tool_spec, params: dict) -> None:
-    """Run a single tool call and print input/output."""
+def _run_exercise(tool_spec, params: dict, cwd: Path) -> None:
+    """Run a single tool call and print input/output plus UI summary."""
+    from rich.console import Console
+
+    from archie.ui.tool_formatters import format_tool_complete
+
+    console = Console(highlight=False)
     params_str = json.dumps(params, ensure_ascii=False)
 
     # Header
@@ -115,6 +120,11 @@ def _run_exercise(tool_spec, params: dict) -> None:
     click.echo()
     for line in result.split("\n"):
         click.echo(f"  {line}")
+
+    # UI summary (what the TUI would show)
+    is_error = result.startswith("Error:")
+    summary = format_tool_complete(tool_spec.name, params, result, is_error, cwd)
+    console.print(f"  [dim]ui:[/] {summary}")
     click.echo()
 
 
@@ -151,7 +161,7 @@ def run_debug(tool_name: str | None, params_json: str | None, show_schema: bool,
             params = json.loads(params_json)
         except json.JSONDecodeError as e:
             raise click.UsageError(f"Invalid JSON: {e}") from None
-        _run_exercise(spec, params)
+        _run_exercise(spec, params, cwd)
     else:
         # Default exercises
         exercises = EXERCISES.get(tool_name, [])
@@ -159,4 +169,4 @@ def run_debug(tool_name: str | None, params_json: str | None, show_schema: bool,
             click.echo(f"No default exercises for '{tool_name}'. Pass JSON params manually.")
             return
         for params in exercises:
-            _run_exercise(spec, params)
+            _run_exercise(spec, params, cwd)
