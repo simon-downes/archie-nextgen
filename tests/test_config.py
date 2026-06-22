@@ -25,14 +25,14 @@ def test_load_config_reads_existing(tmp_path, monkeypatch):
     (tmp_path / "nextgen.yaml").write_text(
         yaml.dump(
             {
-                "model": "eu.anthropic.claude-haiku-3-20250305-v1:0",
+                "model": "eu.anthropic.claude-sonnet-4-6",
                 "region": "eu-west-1",
             }
         )
     )
 
     config = load_config()
-    assert config.model == "eu.anthropic.claude-haiku-3-20250305-v1:0"
+    assert config.model == "eu.anthropic.claude-sonnet-4-6"
     assert config.region == "eu-west-1"
 
 

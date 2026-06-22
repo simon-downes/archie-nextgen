@@ -35,8 +35,8 @@ from archie.llm import TextDelta as LlmTextDelta
 from archie.logs import bind, clear, log_event
 from archie.session import Session, Turn, TurnLog, summarise_tool_output
 from archie.tools import ToolRegistry, current_tool_use_id, truncate_result
-from archie.tools.ui_summary import format_tool_complete, format_tool_detail, format_tool_pending
 from archie.types import TextBlock, ToolResultBlock, ToolUseBlock
+from archie.ui.tool_formatters import format_tool_complete, format_tool_detail, format_tool_pending
 
 if TYPE_CHECKING:
     from archie.sandbox import Sandbox

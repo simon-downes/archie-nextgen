@@ -7,7 +7,7 @@ from unittest.mock import patch
 import yaml
 
 from archie.brain import BrainIndex
-from archie.tools.brain_tool import make_brain_spec
+from archie.tools.brain import make_brain_spec
 
 
 class TestBrainIndex:

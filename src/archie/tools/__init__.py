@@ -232,7 +232,7 @@ def create_default_registry(
     # Brain tool: only registered if the brain directory exists.
     # Requires `archie init` to have been run first.
     if brain_dir is not None and brain_dir.exists():
-        from archie.tools.brain_tool import make_brain_spec
+        from archie.tools.brain import make_brain_spec
 
         registry.register(make_brain_spec(brain_dir))
 
