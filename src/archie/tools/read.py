@@ -285,7 +285,14 @@ def _handle_directory(resolved: Path, path_str: str, cwd: Path) -> str:
     # Build tree from flat entries.
     tree_lines = _format_tree_from_files(display_entries)
 
-    header = _shorten_path(path_str, cwd)
+    # Summary: count files and unique directories
+    file_count = len(display_entries)
+    dir_set: set[tuple[str, ...]] = set()
+    for rp, _ in display_entries:
+        for i in range(len(rp.parts) - 1):
+            dir_set.add(rp.parts[: i + 1])
+
+    header = f"{_shorten_path(path_str, cwd)}/ ({file_count} files, {len(dir_set)} dirs)"
     output_lines = [header, ""] + tree_lines
 
     if capped:
@@ -306,7 +313,7 @@ def _shorten_path(path_str: str, cwd: Path) -> str:
 
 
 def _format_tree_from_files(entries: list[tuple[Path, str]]) -> list[str]:
-    """Format flat file entries as tree-style output."""
+    """Format flat file entries as indented directory listing."""
     if not entries:
         return []
 
@@ -330,13 +337,12 @@ def _format_tree_from_files(entries: list[tuple[Path, str]]) -> list[str]:
 
 
 def _tree_print(node: _TreeNode, prefix: str, lines: list[str]) -> None:
-    """Recursively print tree nodes."""
+    """Recursively print tree nodes with indentation."""
     if not node.children:
         return
 
-    # Collect all children.
-    entries = list(node.children.items())
     # Separate directories and files at this level.
+    entries = list(node.children.items())
     dirs = [(name, child) for name, child in entries if not child.is_file]
     files = [(name, child) for name, child in entries if child.is_file]
 
@@ -344,13 +350,9 @@ def _tree_print(node: _TreeNode, prefix: str, lines: list[str]) -> None:
     dirs.sort(key=lambda x: x[0].lower())
     files.sort(key=lambda x: x[0].lower())
 
-    all_entries = dirs + files
-
-    for idx, (name, child) in enumerate(all_entries):
-        is_dir = not child.is_file
-        suffix = "/" if is_dir else ""
-        lines.append(f"{prefix}{name}{suffix}")
-
-        if is_dir:
-            connector = "│  " if idx < len(all_entries) - 1 else "   "
-            _tree_print(child, prefix + connector, lines)
+    # Directories first, then files
+    for name, child in dirs:
+        lines.append(f"{prefix}{name}/")
+        _tree_print(child, prefix + "  ", lines)
+    for name, _child in files:
+        lines.append(f"{prefix}{name}")
