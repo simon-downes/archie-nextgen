@@ -42,7 +42,7 @@ from archie.llm import BedrockClient, LLMClient, get_ollama_client_class
 from archie.logs import log_event
 from archie.models import get_model_info
 from archie.project import detect_project_dir
-from archie.prompt import SYSTEM_PROMPT
+from archie.prompt import build_system_prompt
 from archie.sandbox import Sandbox
 from archie.session import Session
 from archie.tools import create_default_registry
@@ -173,11 +173,19 @@ class ArchieApp(App):
             mtime_cache=self.mtime_cache,
             pre_content_stash=self.pre_content_stash,
         )
+        # Load AGENTS.md if present
+        agents_md_path = self.project_dir / "AGENTS.md"
+        agents_md = agents_md_path.read_text(encoding="utf-8") if agents_md_path.exists() else None
+
         self._agent = AgentLoop(
             llm_client=self.llm,
             session=self.session,
             tool_registry=self.tool_registry,
-            system_prompt=SYSTEM_PROMPT + self._build_env_block(),
+            system_prompt=build_system_prompt(
+                project_dir=self.project_dir,
+                git_branch=self._git_branch,
+                agents_md=agents_md,
+            ),
             emit=self._on_agent_event,
             sandbox=self.sandbox,
             artifact_store=self.artifact_store,
@@ -185,20 +193,6 @@ class ArchieApp(App):
             cwd=self.project_dir,
             pre_content_stash=self.pre_content_stash,
         )
-
-    def _build_env_block(self) -> str:
-        """Build the dynamic environment block appended to the system prompt."""
-        return f"""\n## Environment
-
-- Project: {self.project_dir.name}
-- Working directory: /workspace (Docker sandbox, Debian Linux)
-- Python interpreter: python3 (available globally in sandbox)
-- Git branch: {self._git_branch}
-- File tools: use relative paths from project root (e.g. src/archie/ui/app.py)
-- Shell: executes in /workspace — do not cd elsewhere
-- Prefer provided tools (read, edit_file, search_files, code) over shell equivalents
-  (cat, sed, grep, find). Use shell only for running commands, tests, and git.
-"""
 
     def compose(self) -> ComposeResult:
         """Build the main UI layout."""
