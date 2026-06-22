@@ -125,7 +125,7 @@ def _build_registry(cwd: Path):
         from archie.tools.self_debug import make_self_debug_spec
 
         if LOG_PATH.exists():
-            registry.register(make_self_debug_spec(LOG_PATH, lambda: "debug"))
+            registry.register(make_self_debug_spec(LOG_PATH, lambda: "2026-06-21-archie-nextgen-eb7df"))
     except Exception:
         pass
 
