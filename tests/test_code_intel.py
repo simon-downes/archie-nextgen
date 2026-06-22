@@ -22,7 +22,7 @@ def test_python_imports(index, tmp_path):
     # Find imports symbol
     imports = next((s for s in symbols if s.kind == "imports"), None)
     assert imports is not None
-    assert imports.signature == "imports: [line 1-3]"
+    assert imports.signature == "imports"
     assert len(imports.children) == 3
 
 

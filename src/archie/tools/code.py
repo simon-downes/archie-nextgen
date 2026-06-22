@@ -377,6 +377,11 @@ def _format_symbols(
             # Only show matching symbols
             if not _symbol_matches(sym, name_filter):
                 continue
-        lines.append(f"{prefix}{sym.signature} [line {sym.line}-{sym.end_line}]")
+        # Collapse multi-line signatures to a single line
+        sig = " ".join(sym.signature.split())
+        lines.append(f"{prefix}{sig} [line {sym.line}-{sym.end_line}]")
+        # Skip children for imports — just show the line range
+        if sym.kind == "imports":
+            continue
         if sym.children:
             _format_symbols(sym.children, lines, indent + 1, name_filter)

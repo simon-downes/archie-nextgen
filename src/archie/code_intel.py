@@ -386,7 +386,7 @@ def _extract_python_imports(root, source: bytes) -> Symbol | None:
         kind="imports",
         line=first_line,
         end_line=last_line,
-        signature=f"imports: [line {first_line}-{last_line}]",
+        signature="imports",
         children=[Symbol(m, "import", first_line, last_line, f"import {m}") for m in modules[:5]],
     )
 
