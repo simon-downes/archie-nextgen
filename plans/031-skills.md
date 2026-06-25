@@ -93,20 +93,39 @@ Loaded: python-testing
 Today `self.system_prompt` in `AgentLoop` is a static string set in `__init__`.
 The skill tool needs to modify the prompt mid-session.
 
-Approach: `AgentLoop` stores a prompt-building callable instead of a string.
-`_do_request()` calls it to get the current prompt. The callable closes over
-the `loaded_skills` list. When the skill tool appends to the list, the next
-request automatically includes the new skill.
+Approach: `AgentLoop.__init__` keeps `system_prompt: str` but adds an optional
+`build_prompt: Callable[[], str] | None` parameter. If provided, it's used;
+otherwise the static string is wrapped internally:
 
 ```python
 # In AgentLoop.__init__:
-self._build_prompt: Callable[[], str] = build_prompt_fn
+self._build_prompt = build_prompt or (lambda: system_prompt)
 
 # In _do_request():
 system = self._build_prompt()
 ```
 
-This keeps the agent loop unaware of skill mechanics — it just calls the function.
+This is backwards-compatible — all existing callers pass a string and work
+unchanged. Only `app.py` passes the callable. Zero test breakage.
+
+### State Ownership and Wiring
+
+`loaded_skills: list[tuple[str, str]]` is instantiated in `app.py` alongside
+other shared session state (`mtime_cache`, `pre_content_stash`). It's passed to:
+
+1. `create_default_registry(..., catalog=catalog, loaded_skills=loaded_skills)`
+   — the skill tool captures it via closure, mutates it on load
+2. The prompt-building closure passed to `AgentLoop` — reads it on each request
+
+This mirrors how `mtime_cache` is already shared between tools (mutate) and the
+agent loop (read/invalidate). Same pattern, same wiring location in `app.py`.
+
+### User Skills Path
+
+`~/.agents/skills/` is hardcoded in `discover_skills()` as a default. It's a
+conventional cross-tool path (matching Maki/OpenCode standards) that doesn't
+vary per-project. No config key needed. If customisation is needed later, add
+one then.
 
 ### Thread Safety
 
@@ -122,49 +141,50 @@ requests happen sequentially on the same worker thread. The skill tool mutates
    - Use `pyyaml` (already a dependency) for frontmatter parsing — split on `---` delimiters, `yaml.safe_load` the middle
    - Discovery returns a frozen dataclass `SkillEntry(name, description, path)` per skill
    - `SkillCatalog` is a dict mapping name → `SkillEntry`, built once at session start
+   - User skills path `~/.agents/skills/` is hardcoded in `discover_skills()` as a constant
+   - `build_system_prompt()` accepts `loaded_skills` from this milestone onwards (empty initially) so the "Loaded:" line renders correctly when skills are loaded in M3
    - ⚠️ Frontmatter parsing must handle missing/malformed frontmatter gracefully (log warning, skip file)
    Tasks:
-   - Add `src/archie/skills.py` with `SkillEntry` dataclass and `discover_skills(paths: list[Path]) -> dict[str, SkillEntry]`
+   - Add `src/archie/skills.py` with `SkillEntry` dataclass and `discover_skills(project_dir: Path) -> dict[str, SkillEntry]` (scans project + user paths internally)
    - Parse SKILL.md files: split on `---`, yaml.safe_load frontmatter, validate name+description present
-   - Call `discover_skills()` in `app.py` at session start with project and user paths
-   - Pass catalog to `build_system_prompt()`, render `<skills>` section listing names + descriptions
+   - Call `discover_skills()` in `src/archie/ui/app.py` at session start
+   - Update `build_system_prompt()` to accept `catalog: dict[str, SkillEntry]` and `loaded_skills: list[tuple[str, str]]`, render `<skills>` section with catalog and loaded state
    - Add `tests/test_skills.py` with fixtures for valid/invalid/duplicate skills
    Deliverable: System prompt includes a `<skills>` section listing discovered skills
-   Verify: `uv run pytest tests/test_skills.py` passes; create a test skill in `.archie/skills/`, start a session, verify `<skills>` appears in prompt via `self_debug`
+   Verify: `uv run pytest tests/test_skills.py` passes; create a test skill in `.archie/skills/`, verify `build_system_prompt()` output includes the skill name in `<skills>`
 
 2. Skill tool — load and read
    Approach:
    - Follows the closure pattern: `make_skill_spec(catalog, loaded_skills)` captures both
-   - `loaded_skills` is a `list[tuple[str, str]]` (name, body) — order preserved, shared with prompt builder
+   - `loaded_skills` is a `list[tuple[str, str]]` (name, body) — instantiated in `app.py`, passed to both registry and prompt builder
+   - `create_default_registry()` gains `catalog` and `loaded_skills` params (both optional, tool only registered when catalog is non-empty)
    - Mode 1 (load): read SKILL.md body (everything after second `---`), append to loaded_skills, return confirmation + file listing via `os.listdir` on skill dir
    - Mode 2 (read reference): resolve `file` param relative to skill's directory path, validate it stays within (no `..` escape), return content
-   - Register in `create_default_registry()` conditional on catalog being non-empty
    - ⚠️ The `file` param must be validated like `validate_path` — reject traversal outside skill dir
    Tasks:
    - Add `src/archie/tools/skill.py` with `make_skill_spec(catalog, loaded_skills)`
    - Implement load mode: read body, append to loaded_skills, format file listing
    - Implement read mode: resolve path, validate containment, return content
-   - Register in `create_default_registry()` when catalog is non-empty
+   - Add `catalog` and `loaded_skills` params to `create_default_registry()`, register skill tool when catalog is non-empty
+   - Wire in `app.py`: instantiate `loaded_skills = []`, pass to both `create_default_registry()` and prompt closure
    - Add `tests/test_tool_skill.py` covering: load, load duplicate, read reference, path escape rejection
    Deliverable: Skill tool loads skills and reads references correctly
-   Verify: `uv run pytest tests/test_tool_skill.py` passes; `uv run archie debug skill` exercises both modes
+   Verify: `uv run pytest tests/test_tool_skill.py` passes
 
 3. Prompt injection — loaded skills in system prompt
    Approach:
-   - Replace `system_prompt: str` in `AgentLoop.__init__` with `_build_prompt: Callable[[], str]`
+   - Add optional `build_prompt: Callable[[], str] | None = None` to `AgentLoop.__init__` alongside existing `system_prompt: str`
+   - Internally: `self._build_prompt = build_prompt or (lambda: system_prompt)` — backwards-compatible, zero test changes
    - `_do_request()` calls `self._build_prompt()` instead of using `self.system_prompt` directly
-   - In `app.py`, construct the callable as a closure over `loaded_skills` and other prompt inputs
-   - `build_system_prompt()` gains `loaded_skills: list[tuple[str, str]]` param, renders each as `<skill name>...</skill>`
-   - The `<skills>` catalog section shows "Loaded: x, y" when skills are active
-   - ⚠️ Existing tests mock/set `system_prompt` as a string — update them to use the new callable pattern
+   - In `app.py`, construct the callable as a closure over `loaded_skills`, catalog, and other prompt inputs
+   - `build_system_prompt()` already accepts `loaded_skills` from M1 — it renders each loaded skill as `<skill name>...</skill>` after `<tools>`
    Tasks:
-   - Update `build_system_prompt()` to accept and render `loaded_skills`
-   - Change `AgentLoop.__init__` to accept `build_prompt: Callable[[], str]` instead of `system_prompt: str`
-   - Update `_do_request()` to call the callable
-   - Update `app.py` to pass a closure that calls `build_system_prompt()` with current loaded_skills
-   - Update `tests/test_agent.py` to use the new interface (pass a lambda returning a string)
+   - Add `build_prompt` param to `AgentLoop.__init__`, wire `self._build_prompt` with fallback
+   - Update `_do_request()` to call `self._build_prompt()`
+   - Update `app.py` to pass a closure: `build_prompt=lambda: build_system_prompt(..., loaded_skills=loaded_skills)`
+   - Write integration test: mock LLM, call skill tool, verify next `stream()` call receives system prompt containing the skill body
    Deliverable: Loading a skill via the tool causes it to appear in the system prompt on the next request
-   Verify: Write integration test: mock LLM, call skill tool, verify next `stream()` call receives system prompt containing the skill body
+   Verify: `uv run pytest tests/test_agent.py` and integration test pass; existing tests unchanged (still pass string via `system_prompt`)
 
 4. Polish and debug integration
    Approach:
